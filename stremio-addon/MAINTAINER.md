@@ -23,6 +23,34 @@ Do not "simplify" this back to `os.path.exists(path + ".aria2")`.
 cd /home/arnav/stremio-shelf && .venv/bin/python tests/test_partial.py
 ```
 
+## Title resolution
+
+Filenames are the metadata source, so they are scrubbed before matching:
+
+1. drop the extension, replace dots and underscores with spaces
+2. remove upload-site noise (`www.x.ws`, `something.com`) before anything else
+3. cut at the first year (19xx/20xx), keep that year
+4. strip bracket groups, then the junk list: resolutions, codecs, audio, HDR, source
+   tags, language tags, `ESub`, `HQ`, `Full HD`, release and remux markers
+5. collapse whitespace and trim stray separators
+
+Matching is exact after normalising to lowercase alphanumerics. No fuzzy matching:
+it shipped a wrong cover once (`Punjab '95` for `Satluj`). When the file name
+genuinely differs from the catalogue name, add an alias to `ALIASES` in `app.py`
+or a per-file override, which is faster and does not risk the rest of the library.
+
+Overrides live in `~/.config/shelf/overrides.json`, keyed by file name:
+
+```json
+{"weird_cam_rip_xyz.mkv": {"title": "Inception", "year": "2010", "imdb": "tt1375666"}}
+```
+
+`imdb` or `tmdb` skips lookup entirely; `title`/`year` only steer the search.
+The file is re-read when its mtime changes, so no restart is needed.
+
+`/health` reports `needs_review`: files that resolved to no IMDb or TMDB id, i.e.
+the ones wearing a generated poster. That is the worklist for aliases/overrides.
+
 ## Other invariants
 
 - Catalog is sorted by file mtime descending, newest first. A new download must

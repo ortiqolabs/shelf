@@ -49,9 +49,39 @@ YEAR = re.compile(r"(19|20)\d{2}")
 JUNK = re.compile(
     r"\b(2160p|1080p|720p|480p|4k|uhd|web[- ]?dl|webrip|hdtv|bluray|brrip|dvdrip|hdrip|"
     r"x264|x265|h264|h265|hevc|aac|ddp?5[. ]?1|dts|10bit|hdr|sdr|proper|repack|"
-    r"amzn|nf|zee5|hdhub4u|9xmovies|xbet|esub|multi|dual audio)\b",
+    r"amzn|nf|zee5|hdhub4u|9xmovies|xbet|esub|multi|dual audio|"
+    r"esubs?|msub|subbed|dubbed|remux|atmos|truehd|eac3|ac3|opus|flac|xvid|divx|av1|"
+    r"extended|uncut|hq|fullhd|full hd|hd|web|dl|5[. ]1|7[. ]1|2[. ]0)\b",
     re.I,
 )
+
+# upload sites and urls leak into file names; they are never part of a title
+SITE = re.compile(
+    r"(www\.)?[\w-]+\.(com|net|org|ws|in|mx|to|cc|link|xyz|top|vip|club|live|me|tv)\b",
+    re.I,
+)
+OVERRIDES_PATH = os.path.expanduser("~/.config/shelf/overrides.json")
+_overrides = {"at": 0.0, "data": {}}
+
+
+def overrides() -> dict:
+    """Per-file metadata fixes: {"<filename>": {"title","year","imdb","tmdb"}}."""
+    try:
+        mtime = os.path.getmtime(OVERRIDES_PATH)
+    except OSError:
+        return {}
+    if _overrides["at"] != mtime:
+        try:
+            data = json.load(open(OVERRIDES_PATH))
+            _overrides.update(at=mtime, data=data if isinstance(data, dict) else {})
+        except Exception:
+            _overrides.update(at=mtime, data={})
+    return _overrides["data"]
+
+
+def override_for(name: str) -> dict:
+    data = overrides()
+    return data.get(name) or data.get(os.path.basename(name)) or {}
 
 app = FastAPI(title="Shelf for Stremio", docs_url=None, redoc_url=None)
 last_seen = time.time()
@@ -90,7 +120,12 @@ def untoken(tok: str) -> str:
 
 
 def clean_title(name: str):
-    stem = os.path.splitext(name)[0].replace(".", " ").replace("_", " ")
+    forced = override_for(name)
+    if forced.get("title"):
+        return str(forced["title"]), str(forced.get("year") or "") or None
+
+    stem = SITE.sub(" ", os.path.splitext(name)[0])
+    stem = stem.replace(".", " ").replace("_", " ")
     year = None
     m = YEAR.search(stem)
     if m:
@@ -105,7 +140,8 @@ def clean_title(name: str):
             stem = stem[m.end():]
             stem = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", stem)
     stem = JUNK.sub(" ", stem)
-    stem = re.sub(r"\s+", " ", stem).strip(" -")
+    stem = re.sub(r"\s+", " ", stem).strip(" -[](){}")
+    stem = re.sub(r"^[-\s]+|[-\s]+$", "", stem)
     title = stem.title() if stem.isupper() or stem.islower() else stem
     return (title or os.path.splitext(name)[0]), year
 
@@ -301,7 +337,7 @@ async def tmdb_details(kind: str, tmdb_id: int) -> dict:
     return out
 
 
-async def find_cover(kind: str, title: str, year: str | None) -> dict:
+async def find_cover(kind: str, title: str, year: str | None, key: str | None = None) -> dict:
     """Look the title up in Cinemeta. Returns {'poster': url, 'id': imdb}."""
     cache = _load_matches()
     key = f"{kind}|{title}|{year or ''}"
@@ -309,6 +345,14 @@ async def find_cover(kind: str, title: str, year: str | None) -> dict:
     if isinstance(hit, str):
         hit = {"poster": hit, "id": "", "tmdb": 0, "at": 0}
         cache[key] = hit
+    forced = override_for(key) if key else {}
+    if forced.get("imdb"):
+        found = {"poster": f"https://images.metahub.space/poster/medium/{forced['imdb']}/img",
+                 "id": str(forced["imdb"]), "tmdb": int(forced.get("tmdb") or 0), "at": time.time()}
+        cache[key] = found
+        _save_matches()
+        return found
+
     if isinstance(hit, dict):
         empty = not hit.get("poster") and not hit.get("id") and not hit.get("tmdb")
         stale = empty and time.time() - float(hit.get("at") or 0) > MISS_TTL
@@ -353,19 +397,22 @@ async def find_cover(kind: str, title: str, year: str | None) -> dict:
 
 
 async def cover_url(request: Request, kind: str, title: str, year: str | None, rel: str) -> str:
-    hit = await find_cover(kind, title, year)
+    hit = await find_cover(kind, title, year, rel)
     return hit.get("poster") or poster_url(request, title, year, rel)
 
 
-async def details(kind: str, title: str, year: str | None) -> dict:
+async def details(kind: str, title: str, year: str | None, key: str | None = None) -> dict:
     """Detail-page metadata: Cinemeta first, TMDB fills the gaps."""
     cache = _load_matches()
-    mkey = f"meta|{kind}|{title}|{year or ''}"
+    mkey = f"meta|{kind}|{title}|{year or ''}|{key or ''}"
     cached = cache.get(mkey)
     if isinstance(cached, dict) and cached.get("at", 0) + META_TTL > time.time():
         return cached.get("data") or {}
 
-    hit = await find_cover(kind, title, year)
+    forced = override_for(key) if key else {}
+    hit = await find_cover(kind, title, year, key)
+    if forced.get("tmdb") and not hit.get("tmdb"):
+        hit["tmdb"] = int(forced["tmdb"])
     imdb = hit.get("id")
 
     cm: dict = {}
@@ -605,7 +652,7 @@ async def meta(kind: str, mid: str, request: Request):
         "releaseInfo": year or "",
         "description": os.path.basename(path),
     }
-    extra = await details(kind, title, year)
+    extra = await details(kind, title, year, rel)
     for key in (
         "description", "runtime", "genres", "cast", "director", "writer",
         "country", "released", "imdbRating", "background", "logo", "links",
@@ -801,10 +848,23 @@ async def health(request: Request):
             stale.append(entry.name)
         if partial:
             hidden.append(entry.name)
+    review = []
+    for entry in movies:
+        title, year = clean_title(entry.name)
+        hit = await find_cover("movie", title, year, os.path.relpath(entry.path, ROOT))
+        if not hit.get("id") and not hit.get("tmdb"):
+            review.append(entry.name)
+    for path in shows:
+        title, year = clean_title(os.path.basename(path))
+        hit = await find_cover("series", title, year, os.path.relpath(path, ROOT))
+        if not hit.get("id") and not hit.get("tmdb"):
+            review.append(os.path.basename(path))
+
     return JSONResponse({
         "root": ROOT,
         "movies": len(movies),
         "series": len(shows),
+        "needs_review": review,
         "aria2": {"rpc": rpc_ok, "open": len(open_paths)},
         "hidden": hidden,
         "stale_sidecars": stale,
