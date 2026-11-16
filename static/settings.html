@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Settings · Shelf</title>
+<meta name="theme-color" content="#0b0b0c" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="preload" href="/fonts/google-sans-text-400.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="stylesheet" href="/app.css?v=15" />
+<link rel="stylesheet" href="/settings.css?v=15" />
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M3 4.5h14M3 10h14M3 15.5h9" />
+    </svg>
+    <span class="wordmark">Shelf</span>
+  </div>
+  <a class="ghost back" href="/">Back to downloads</a>
+</header>
+
+<main>
+  <h1 class="page-title">Settings</h1>
+  <p class="page-sub">Changes apply to new downloads immediately and survive restarts</p>
+
+  <form id="settings-form" class="panel" autocomplete="off">
+    <div class="field">
+      <label for="downloadDir">Download folder</label>
+      <p class="help">Absolute path on the Pi. Created on save if it does not exist.</p>
+      <input id="downloadDir" name="downloadDir" type="text" spellcheck="false"
+             autocapitalize="off" autocomplete="off" placeholder="/media/Movies_and_Shows" />
+    </div>
+
+    <div class="field">
+      <label for="maxConcurrent">Concurrent downloads</label>
+      <p class="help">How many transfers run at the same time.</p>
+      <input id="maxConcurrent" name="maxConcurrent" type="number" min="1" max="16" step="1" inputmode="numeric" />
+    </div>
+
+    <div class="field">
+      <label for="maxDownloadLimit">Speed limit</label>
+      <p class="help">0 for unlimited, or a value like 500K or 5M.</p>
+      <input id="maxDownloadLimit" name="maxDownloadLimit" type="text" spellcheck="false"
+             autocapitalize="off" autocomplete="off" placeholder="0" />
+    </div>
+
+    <p class="config-path mono" id="configPath"></p>
+
+    <div class="actions">
+      <a class="ghost" href="/">Cancel</a>
+      <button class="primary" type="submit">Save changes</button>
+    </div>
+
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+  </form>
+</main>
+
+<script src="/settings.js?v=15"></script>
+</body>
+</html>

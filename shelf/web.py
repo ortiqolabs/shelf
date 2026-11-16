@@ -8,11 +8,11 @@ import re
 import time
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config
+from . import config, settings
 from .aria2 import Aria2, summary
 from .qbittorrent import QB_PREFIX, QbError, Qbittorrent
 
@@ -32,6 +32,12 @@ class AddBody(BaseModel):
 class ActionBody(BaseModel):
     gid: str
     action: str
+
+
+class SettingsBody(BaseModel):
+    downloadDir: str | None = None
+    maxConcurrent: int | None = None
+    maxDownloadLimit: str | None = None
 
 
 @app.middleware("http")
@@ -163,6 +169,26 @@ async def action(body: ActionBody) -> dict:
     if isinstance(result, dict) and result.get("message"):
         raise HTTPException(400, result["message"])
     return {"ok": True}
+
+
+@app.get("/api/settings")
+async def get_settings() -> dict:
+    return settings.current()
+
+
+@app.put("/api/settings")
+async def put_settings(body: SettingsBody):
+    payload = body.model_dump(exclude_none=True)
+    try:
+        return await settings.save(aria2, payload)
+    except settings.SettingsError as exc:
+        field = next(iter(payload), None)
+        return JSONResponse(status_code=400, content={"detail": str(exc), "field": field})
+
+
+@app.get("/settings", include_in_schema=False)
+async def settings_page() -> FileResponse:
+    return FileResponse(config.STATIC_DIR / "settings.html")
 
 
 @app.post("/api/all/{verb}")
