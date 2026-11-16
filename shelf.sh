@@ -26,6 +26,11 @@ SHARE_NAME=""
 SHARE_WRITE="no"
 DO_SAMBA="yes"
 DO_FIREWALL="yes"
+WITH_STREMIO="no"
+ADDON_PORT="7020"
+TMDB_KEY=""
+YES="no"
+CONFIGURED="no"
 DRY_RUN="no"
 ACTION="setup"
 
@@ -87,16 +92,26 @@ Options for --setup
   --share PATH        folder to share over Samba (default: the download folder)
   --name NAME         Samba share name (default: the folder name)
   --write             make the share writable (default: read-only guests)
+  --with-stremio      also install the Stremio addon from ./stremio-addon
+  --no-stremio        skip the addon (default)
+  --addon-port PORT   addon port (default: 7020)
+  --tmdb-key KEY      store a TMDB key for posters, optional
   --no-samba          skip Samba setup
   --no-firewall       skip firewall rules
   --port PORT         page port (default: 5000)
   --idle SECONDS      sleep after this much idle time (default: 900)
   --user USER         system user that runs the services (default: sudo caller)
   --dry-run           print what would happen, change nothing
+  -y, --yes           take every default, never ask a question
   --follow            with --logs, stream instead of printing once
 
+With no options and a terminal attached, --setup asks four short questions with
+safe defaults. Any explicit option skips the questions, for scripted installs.
+
 Examples
-  sudo ./shelf.sh --setup --dir /srv/media --name Media --write
+  sudo ./shelf.sh                       guided setup
+  sudo ./shelf.sh --yes                 defaults, no questions
+  sudo ./shelf.sh --with-stremio --dir /srv/media --name Media --write
   ./shelf.sh --status
 EOF
 }
@@ -114,16 +129,21 @@ while [ $# -gt 0 ]; do
     --uninstall)    ACTION="uninstall" ;;
     -h|--help)      usage; exit 0 ;;
     -v|--version)   printf '%s %s\n' "$APP" "$VERSION"; exit 0 ;;
-    --dir)          DOWNLOAD_DIR="${2:?--dir needs a path}"; shift ;;
-    --share)        SHARE_PATH="${2:?--share needs a path}"; shift ;;
-    --name)         SHARE_NAME="${2:?--name needs a value}"; shift ;;
-    --port)         PORT="${2:?--port needs a number}"; shift ;;
-    --idle)         IDLE_SECONDS="${2:?--idle needs seconds}"; shift ;;
-    --user)         RUN_USER="${2:?--user needs a name}"; shift ;;
-    --write)        SHARE_WRITE="yes" ;;
-    --no-samba)     DO_SAMBA="no" ;;
-    --no-firewall)  DO_FIREWALL="no" ;;
+    --dir)          DOWNLOAD_DIR="${2:?--dir needs a path}"; shift; CONFIGURED="yes" ;;
+    --share)        SHARE_PATH="${2:?--share needs a path}"; shift; CONFIGURED="yes" ;;
+    --name)         SHARE_NAME="${2:?--name needs a value}"; shift; CONFIGURED="yes" ;;
+    --port)         PORT="${2:?--port needs a number}"; shift; CONFIGURED="yes" ;;
+    --idle)         IDLE_SECONDS="${2:?--idle needs seconds}"; shift; CONFIGURED="yes" ;;
+    --user)         RUN_USER="${2:?--user needs a name}"; shift; CONFIGURED="yes" ;;
+    --write)        SHARE_WRITE="yes"; CONFIGURED="yes" ;;
+    --with-stremio) WITH_STREMIO="yes"; CONFIGURED="yes" ;;
+    --no-stremio)   WITH_STREMIO="no"; CONFIGURED="yes" ;;
+    --addon-port)   ADDON_PORT="${2:?--addon-port needs a number}"; shift; CONFIGURED="yes" ;;
+    --tmdb-key)     TMDB_KEY="${2:?--tmdb-key needs a value}"; shift; CONFIGURED="yes" ;;
+    --no-samba)     DO_SAMBA="no"; CONFIGURED="yes" ;;
+    --no-firewall)  DO_FIREWALL="no"; CONFIGURED="yes" ;;
     --dry-run)      DRY_RUN="yes" ;;
+    -y|--yes|--non-interactive) YES="yes" ;;
     --follow)       FOLLOW="yes" ;;
     *)              die "unknown option: $1 (try --help)" ;;
   esac
@@ -145,6 +165,47 @@ need_root() {
 case "$ACTION" in
   setup|start|stop|restart|logs|uninstall) need_root "$@" ;;
 esac
+
+# ---------------------------------------------------------------- guided setup
+
+ask() {
+  local prompt="$1" default="$2" answer=""
+  printf '  %s %s[%s]%s: ' "$prompt" "$DIM" "$default" "$OFF" >&2
+  read -r answer || true
+  printf '%s' "${answer:-$default}"
+}
+
+guided_setup() {
+  [ "$ACTION" = "setup" ] || return 0
+  [ "$YES" = "yes" ] && return 0
+  [ "$CONFIGURED" = "yes" ] && return 0
+  [ -t 0 ] || return 0
+
+  printf '\n%sShelf setup%s  press Enter to accept the default in brackets\n\n' "$BOLD" "$OFF"
+  DOWNLOAD_DIR="$(ask "Download folder" "$DOWNLOAD_DIR")"
+  PORT="$(ask "Page port" "$PORT")"
+
+  local share addon firewall
+  share="$(ask "Share the download folder over Samba (y/n)" "y")"
+  case "$share" in n|N|no|NO) DO_SAMBA="no" ;; esac
+
+  addon="$(ask "Install the Stremio addon (y/n)" "n")"
+  case "$addon" in
+    y|Y|yes|YES)
+      WITH_STREMIO="yes"
+      ADDON_PORT="$(ask "Addon port" "$ADDON_PORT")"
+      ;;
+  esac
+
+  firewall="$(ask "Open firewall ports (y/n)" "y")"
+  case "$firewall" in n|N|no|NO) DO_FIREWALL="no" ;; esac
+
+  printf '\n  folder %s\n  page   http://<host>:%s\n  samba  %s\n  addon  %s\n  firewall %s\n\n' \
+    "$DOWNLOAD_DIR" "$PORT" "$DO_SAMBA" "$WITH_STREMIO" "$DO_FIREWALL"
+  case "$(ask "Looks right (y/n)" "y")" in
+    n|N|no|NO) die "stopped; nothing changed" ;;
+  esac
+}
 
 # ---------------------------------------------------------------- platform
 
@@ -338,6 +399,75 @@ UNIT
   run systemctl daemon-reload
 }
 
+ADDON_DIR="$REPO_DIR/stremio-addon"
+
+install_addon() {
+  [ -d "$ADDON_DIR" ] || die "stremio-addon is missing from $REPO_DIR"
+  log "stremio addon"
+  require_commands python3
+  if [ ! -x "$ADDON_DIR/.venv/bin/python" ]; then
+    run python3 -m venv "$ADDON_DIR/.venv"
+  fi
+  run "$ADDON_DIR/.venv/bin/pip" -q install --upgrade pip
+  run "$ADDON_DIR/.venv/bin/pip" -q install -r "$ADDON_DIR/requirements.txt"
+  if [ "$DRY_RUN" = "no" ]; then
+    chown -R "$RUN_USER" "$ADDON_DIR/.venv"
+  fi
+
+  local tmdb_env="$RUN_HOME/.config/shelf/tmdb.env"
+  if [ -n "$TMDB_KEY" ]; then
+    printf 'TMDB_API_KEY=%s\n' "$TMDB_KEY" | write_file "$tmdb_env" 600
+    [ "$DRY_RUN" = "yes" ] || chown "$RUN_USER" "$tmdb_env"
+  elif [ -f "$tmdb_env" ]; then
+    note "keeping the existing TMDB key in $tmdb_env"
+  fi
+
+  write_file /etc/systemd/system/stremio-shelf.socket 644 <<UNIT
+[Unit]
+Description=Shelf addon for Stremio (socket, wakes on demand)
+PartOf=stremio-shelf.service
+
+[Socket]
+ListenStream=0.0.0.0:$ADDON_PORT
+Accept=no
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target
+UNIT
+
+  write_file /etc/systemd/system/stremio-shelf.service 644 <<UNIT
+[Unit]
+Description=Shelf addon for Stremio
+After=network-online.target
+Requires=stremio-shelf.socket
+After=stremio-shelf.socket
+
+[Service]
+Type=simple
+User=$RUN_USER
+Group=$RUN_USER
+WorkingDirectory=$ADDON_DIR
+EnvironmentFile=-$RUN_HOME/.config/shelf/tmdb.env
+Environment=SHELF_ROOT=$DOWNLOAD_DIR
+Environment=SHELF_IDLE_SECONDS=1800
+Environment=PYTHONUNBUFFERED=1
+ExecStart=$ADDON_DIR/.venv/bin/uvicorn app:app --fd 3 --proxy-headers
+StandardInput=null
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+
+[Install]
+Also=stremio-shelf.socket
+WantedBy=multi-user.target
+UNIT
+
+  run systemctl daemon-reload
+  run systemctl enable --now stremio-shelf.socket
+  run systemctl restart stremio-shelf.service
+}
+
 start_services() {
   log "starting aria2 and the page"
   run systemctl enable --now aria2.service
@@ -441,6 +571,8 @@ configure_firewall() {
   log "firewall"
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
     note "ufw is active"
+    run ufw allow "$PORT"/tcp
+    [ "$WITH_STREMIO" = "yes" ] && run ufw allow "$ADDON_PORT"/tcp
     if ufw app list 2>/dev/null | grep -q '^  Samba'; then
       run ufw allow Samba
     else
@@ -452,6 +584,8 @@ configure_firewall() {
 
   if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
     note "firewalld is active"
+    run firewall-cmd --permanent --add-port="$PORT"/tcp
+    [ "$WITH_STREMIO" = "yes" ] && run firewall-cmd --permanent --add-port="$ADDON_PORT"/tcp
     run firewall-cmd --permanent --add-service=samba
     run firewall-cmd --reload
     return 0
@@ -460,7 +594,9 @@ configure_firewall() {
   if command -v iptables >/dev/null 2>&1 && iptables -L INPUT -n >/dev/null 2>&1 \
      && [ "$(iptables -S INPUT | wc -l)" -gt 1 ]; then
     note "iptables rules present"
-    for rule in "-p tcp --dport 139" "-p tcp --dport 445" "-p udp --dport 137" "-p udp --dport 138"; do
+    local rules=("-p tcp --dport $PORT" "-p tcp --dport 139" "-p tcp --dport 445" "-p udp --dport 137" "-p udp --dport 138")
+    [ "$WITH_STREMIO" = "yes" ] && rules+=("-p tcp --dport $ADDON_PORT")
+    for rule in "${rules[@]}"; do
       # shellcheck disable=SC2086
       if ! iptables -C INPUT $rule -j ACCEPT 2>/dev/null; then
         # shellcheck disable=SC2086
@@ -486,6 +622,7 @@ configure_firewall() {
 # ---------------------------------------------------------------- actions
 
 do_setup() {
+  guided_setup
   log "setting up $APP in $REPO_DIR for user $RUN_USER"
   install_aria2
   install_app
@@ -497,6 +634,10 @@ do_setup() {
     configure_samba "$SHARE_PATH" "${SHARE_NAME:-$(sanitize_name "$(basename "$SHARE_PATH")")}"
   else
     note "samba skipped"
+  fi
+
+  if [ "$WITH_STREMIO" = "yes" ]; then
+    install_addon
   fi
 
   [ "$DO_FIREWALL" = "yes" ] && configure_firewall || note "firewall skipped"
@@ -517,6 +658,9 @@ do_status() {
     share="$(basename "$share_file" .conf)"
     printf '%s%-12s%s %s\n' "$BOLD" "samba" "$OFF" "smb://${ip:-localhost}/$share"
   done
+  if [ -f /etc/systemd/system/stremio-shelf.socket ]; then
+    printf '%s%-12s%s %s\n' "$BOLD" "addon" "$OFF" "http://${ip:-127.0.0.1}:$(grep -oE '[0-9]+$' /etc/systemd/system/stremio-shelf.socket | head -1)/manifest.json"
+  fi
   printf '%s%-12s%s' "$BOLD" "services" "$OFF"
   for unit in aria2.service "$APP.socket" "$APP.service"; do
     printf ' %s=%s' "$unit" "$(systemctl is-active "$unit" 2>/dev/null || echo unknown)"
@@ -527,7 +671,9 @@ do_status() {
 do_uninstall() {
   log "removing units"
   run systemctl disable --now "$APP.socket" "$APP.service" aria2.service 2>/dev/null || true
-  run rm -f "/etc/systemd/system/$APP.socket" "/etc/systemd/system/$APP.service"
+  run systemctl disable --now stremio-shelf.socket stremio-shelf.service 2>/dev/null || true
+  run rm -f "/etc/systemd/system/$APP.socket" "/etc/systemd/system/$APP.service" \
+    /etc/systemd/system/stremio-shelf.socket /etc/systemd/system/stremio-shelf.service
   run systemctl daemon-reload
   if [ -n "$SHARE_NAME" ]; then
     run rm -f "/etc/samba/shares.d/$SHARE_NAME.conf"

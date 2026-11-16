@@ -17,20 +17,42 @@ pause/resume/delete controls, and a settings page for the download folder.
 - Deleting a transfer removes its files, and only inside the download folder
 - systemd socket activation: the process starts on the first request and exits
   after 15 idle minutes
-- Samba share and firewall rules configured by the same script
+- Samba share, optional Stremio addon, and firewall rules from the same script
+- Guided setup with safe defaults, plus flags for scripted installs
 
 ## Quick start
 
 On the server, from this folder:
 
 ```bash
-sudo ./shelf.sh --setup
+sudo ./shelf.sh
 ```
 
-That installs aria2 and Python, builds the environment, writes
-`~/.config/aria2/aria2.conf`, installs the systemd units, creates a Samba share
-for the download folder, opens the firewall when one is active, and starts
-everything.
+With a terminal attached it asks four short questions, each with a default, and
+shows a summary before touching anything:
+
+```
+Shelf setup  press Enter to accept the default in brackets
+
+  Download folder [/media/Movies_and_Shows]:
+  Page port [5000]:
+  Share the download folder over Samba (y/n) [y]:
+  Install the Stremio addon (y/n) [n]:
+  Open firewall ports (y/n) [y]:
+```
+
+Setup then installs aria2 and Python, builds the environment, writes
+`~/.config/aria2/aria2.conf`, installs the systemd units, creates the Samba
+share, optionally installs the Stremio addon, opens the firewall when one is
+active, and starts everything.
+
+For scripted installs every question is a flag, and `--yes` accepts all
+defaults without asking:
+
+```bash
+sudo ./shelf.sh --yes
+sudo ./shelf.sh --with-stremio --dir /srv/media --name Media --write --no-firewall
+```
 
 ```
 page         http://192.168.1.11:5000
@@ -48,9 +70,10 @@ Other actions:
 sudo ./shelf.sh --uninstall    # units and Samba share, keeps files
 ```
 
-Useful setup flags: `--dir PATH`, `--share PATH`, `--name NAME`, `--write`,
-`--port PORT`, `--idle SECONDS`, `--no-samba`, `--no-firewall`, `--dry-run`.
-`--help` lists them all.
+Setup flags: `--dir PATH`, `--share PATH`, `--name NAME`, `--write`,
+`--with-stremio`, `--addon-port PORT`, `--tmdb-key KEY`, `--port PORT`,
+`--idle SECONDS`, `--no-samba`, `--no-stremio`, `--no-firewall`, `--dry-run`,
+`--yes`. `--help` lists them all.
 
 ## Settings page
 
@@ -58,6 +81,17 @@ Useful setup flags: `--dir PATH`, `--share PATH`, `--name NAME`, `--write`,
 the speed limit. Values are applied to the running daemon through
 `aria2.changeGlobalOption` and written back to `aria2.conf` without touching any
 other line, so comments and unrelated options survive.
+
+## Stremio addon
+
+`stremio-addon/` turns the same library into a Stremio catalog. Install it with
+the guided setup or `sudo ./shelf.sh --with-stremio`; it serves
+`http://<host>:7020/manifest.json`, which is the URL you add inside Stremio.
+
+The addon reads the library from the download folder, stores nothing separately,
+and accepts an optional TMDB key for posters (`--tmdb-key`, kept in
+`~/.config/shelf/tmdb.env`). It sleeps on its own idle timer and runs from
+`stremio-addon/.venv`, so the repository is the only copy of the code.
 
 ## Screenshots
 
@@ -71,6 +105,7 @@ invented demo data, so a real library never appears in the repository.
 ## How it is put together
 
 ```
+stremio-addon/    optional Stremio addon, installed by --with-stremio
 shelf/
   config.py       paths, aria2 secret, idle timer
   aria2.py        JSON-RPC client, transfer shaping, safe deletes
