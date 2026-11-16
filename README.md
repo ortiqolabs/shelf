@@ -32,10 +32,14 @@ costs nothing between visits.
 | | |
 |---|---|
 | **One queue** | aria2 and qBittorrent transfers in a single list, merged server-side |
+| **Optional auth** | `SHELF_TOKEN` gates the page; off by default |
 | **Paste anything** | Magnets, torrent URLs and plain HTTP links, split automatically |
 | **Live updates** | Server-sent events, one snapshot per second, no polling |
 | **Real controls** | Pause, resume, stop and delete, with file cleanup inside the download folder only |
 | **Settings page** | Download folder, concurrency and speed limit, applied live and persisted |
+| **Retry failed transfers** | One button re-adds the original link on either engine |
+| **Free-space guard** | Remaining disk shown quietly, amber when it runs low |
+| **Installable** | Web manifest and icons, so it adds to a phone home screen |
 | **Costs nothing idle** | systemd socket activation; the process exits after 15 idle minutes |
 | **Optional Samba** | A read-only share of the download folder, firewall opened when needed |
 | **Optional addon** | The same library as a Stremio catalogue on port 7020 |
