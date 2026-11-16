@@ -1,35 +1,56 @@
 # Shelf
 
-A download station for a small home server. Paste a magnet, a torrent URL or a
-direct link on one page; aria2 and qBittorrent share the same live queue. The
-page sleeps when nobody is looking, so it costs nothing between visits.
+**A download station for a home server.** One page for aria2 and qBittorrent,
+one live queue, one guided installer. It sleeps when nobody is looking, so it
+costs nothing between visits.
+
+[![tests](https://img.shields.io/badge/tests-65%20passing-brightgreen?style=flat-square)](tests)
+[![python](https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square)](pyproject.toml)
+[![backend](https://img.shields.io/badge/backend-FastAPI-009688?style=flat-square)](https://fastapi.tiangolo.com)
+[![platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%7C%20Linux-lightgrey?style=flat-square)](#requirements)
+[![status](https://img.shields.io/badge/status-active-brightgreen?style=flat-square)](https://github.com/ortiqolabs/shelf/commits/main)
+[![stars](https://img.shields.io/github/stars/ortiqolabs/shelf?style=flat-square)](https://github.com/ortiqolabs/shelf/stargazers)
 
 ![Shelf on desktop](docs/screenshots/desktop.png)
 
-## Why it exists
+## Contents
 
-qBittorrent's WebUI handles torrents and aria2 has no interface at all. Shelf is
-the single front end for both: one field to add a link, one queue, one set of
-pause/resume/delete controls, and a settings page for the download folder.
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Screenshots](#screenshots)
+- [Architecture](#architecture)
+- [Configuration](#configuration)
+- [API](#api)
+- [Stremio addon](#stremio-addon)
+- [Development](#development)
+- [Security](#security)
+- [Design](#design)
+- [Licence](#licence)
 
-- One page, no build step, no framework, no external requests at runtime
-- Live updates over server-sent events, one snapshot per second
-- Deleting a transfer removes its files, and only inside the download folder
-- systemd socket activation: the process starts on the first request and exits
-  after 15 idle minutes
-- Samba share, optional Stremio addon, and firewall rules from the same script
-- Guided setup with safe defaults, plus flags for scripted installs
+## Features
+
+| | |
+|---|---|
+| **One queue** | aria2 and qBittorrent transfers in a single list, merged server-side |
+| **Paste anything** | Magnets, torrent URLs and plain HTTP links, split automatically |
+| **Live updates** | Server-sent events, one snapshot per second, no polling |
+| **Real controls** | Pause, resume, stop and delete, with file cleanup inside the download folder only |
+| **Settings page** | Download folder, concurrency and speed limit, applied live and persisted |
+| **Costs nothing idle** | systemd socket activation; the process exits after 15 idle minutes |
+| **Optional Samba** | A read-only share of the download folder, firewall opened when needed |
+| **Optional addon** | The same library as a Stremio catalogue on port 7020 |
+| **No build step** | Vanilla JS and CSS, self-hosted fonts, zero runtime CDN calls |
 
 ## Quick start
 
-On the server, from this folder:
+On the server, inside the repository:
 
 ```bash
 sudo ./shelf.sh
 ```
 
-With a terminal attached it asks four short questions, each with a default, and
-shows a summary before touching anything:
+With a terminal attached, setup asks four questions with safe defaults and shows
+a summary before changing anything:
 
 ```
 Shelf setup  press Enter to accept the default in brackets
@@ -41,130 +62,151 @@ Shelf setup  press Enter to accept the default in brackets
   Open firewall ports (y/n) [y]:
 ```
 
-Setup then installs aria2 and Python, builds the environment, writes
+It then installs aria2 and Python, builds the environment, writes
 `~/.config/aria2/aria2.conf`, installs the systemd units, creates the Samba
-share, optionally installs the Stremio addon, opens the firewall when one is
-active, and starts everything.
+share, optionally installs the Stremio addon, and opens the firewall when one is
+active.
 
-For scripted installs every question is a flag, and `--yes` accepts all
-defaults without asking:
+```bash
+./shelf.sh --status             # what is running and where
+./shelf.sh --start | --stop | --restart
+./shelf.sh --logs [--follow]
+sudo ./shelf.sh --uninstall     # units and share, keeps files and data
+```
+
+### Scripted installs
+
+Any explicit option skips the questions; `--yes` accepts every default.
 
 ```bash
 sudo ./shelf.sh --yes
 sudo ./shelf.sh --with-stremio --dir /srv/media --name Media --write --no-firewall
 ```
 
-```
-page         http://192.168.1.11:5000
-downloads    /media/Movies_and_Shows
-samba        smb://192.168.1.11/Movies_and_Shows
-services     aria2.service=active shelf.socket=active shelf.service=active
-```
+| Option | Meaning |
+|---|---|
+| `--dir PATH` | download folder |
+| `--share PATH`, `--name NAME`, `--write` | Samba share, name and write access |
+| `--with-stremio`, `--addon-port`, `--tmdb-key` | install the Stremio addon |
+| `--port`, `--idle SECONDS` | page port, idle timeout |
+| `--no-samba`, `--no-stremio`, `--no-firewall` | skip a step |
+| `--dry-run` | print actions, change nothing |
 
-Other actions:
+### Requirements
 
-```bash
-./shelf.sh --status            # what is running, where to reach it
-./shelf.sh --start | --stop | --restart
-./shelf.sh --logs [--follow]
-sudo ./shelf.sh --uninstall    # units and Samba share, keeps files
-```
-
-Setup flags: `--dir PATH`, `--share PATH`, `--name NAME`, `--write`,
-`--with-stremio`, `--addon-port PORT`, `--tmdb-key KEY`, `--port PORT`,
-`--idle SECONDS`, `--no-samba`, `--no-stremio`, `--no-firewall`, `--dry-run`,
-`--yes`. `--help` lists them all.
-
-## Settings page
-
-`/settings` changes the download folder, the number of concurrent downloads, and
-the speed limit. Values are applied to the running daemon through
-`aria2.changeGlobalOption` and written back to `aria2.conf` without touching any
-other line, so comments and unrelated options survive.
-
-## Stremio addon
-
-`stremio-addon/` turns the same library into a Stremio catalog. Install it with
-the guided setup or `sudo ./shelf.sh --with-stremio`; it serves
-`http://<host>:7020/manifest.json`, which is the URL you add inside Stremio.
-
-The addon reads the library from the download folder, stores nothing separately,
-and accepts an optional TMDB key for posters (`--tmdb-key`, kept in
-`~/.config/shelf/tmdb.env`). It sleeps on its own idle timer and runs from
-`stremio-addon/.venv`, so the repository is the only copy of the code.
+Linux with systemd, Python 3.11+, aria2, and about 150 MB of disk for the venv.
+Tested on Raspberry Pi OS 12 (aarch64) and Arch (x86-64).
 
 ## Screenshots
 
-| Desktop | Phone |
+| Queue | Phone |
 |---|---|
 | ![Desktop](docs/screenshots/desktop.png) | ![Phone](docs/screenshots/phone.png) |
 
-Both are generated by `tools/screenshots.py`, which answers `/api/*` with
-invented demo data, so a real library never appears in the repository.
+Generated by `tools/screenshots.py`, which answers `/api/*` with invented demo
+data, so a real library never appears in the repository.
 
-## How it is put together
+## Architecture
 
 ```
-stremio-addon/    optional Stremio addon, installed by --with-stremio
 shelf/
-  config.py       paths, aria2 secret, idle timer
-  aria2.py        JSON-RPC client, transfer shaping, safe deletes
-  qbittorrent.py  optional qBittorrent client, merged into the same queue
-  settings.py     validation and persistence for the settings page
   web.py          routes, event stream, idle watchdog
+  qbittorrent.py  optional qBittorrent client, merged into the same queue
+  aria2.py        JSON-RPC client, transfer shaping, safe deletes
+  settings.py     validation and persistence for the settings page
+  config.py       paths, aria2 secret, timers
 static/           page, settings page, fonts, wallpaper
-deploy/           units and installer used before shelf.sh existed
+stremio-addon/    optional Stremio catalogue addon
 tests/            shaping, API, settings and qBittorrent tests
 shelf.sh          install, start, stop, status, logs, uninstall
+docs/             screenshots
 ```
 
-Transfers carry a `source` field (`aria2` or `qbittorrent`) and ids prefixed
-with `qb:` for the second engine. When no qBittorrent environment variables are
-set, the bridge is inert and the page behaves exactly as before.
+Transfers carry a `source` field (`aria2` or `qbittorrent`); qBittorrent ids
+are namespaced `qb:<hash>`. Without qBittorrent environment variables the bridge
+is inert and the page behaves exactly as an aria2 front end.
 
-## Development
-
-```bash
-python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
-.venv/bin/python -m shelf      # http://127.0.0.1:5000
-.venv/bin/pytest
+```mermaid
+flowchart LR
+    B[Browser] -- SSE --> W[shelf.web]
+    W --> A[aria2 RPC]
+    W --> Q[qBittorrent WebUI]
+    A --> D[(Download folder)]
+    Q --> D
+    D -- optional --> S[Samba share]
+    D -- optional --> T[Stremio addon]
 ```
+
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SHELF_QB_URL` | unset | qBittorrent WebUI, enables the bridge when set |
+| `SHELF_QB_USER` | unset | qBittorrent username |
+| `SHELF_QB_PASS` | unset | qBittorrent password |
+| `SHELF_IDLE_SECONDS` | `900` | idle time before the page process exits |
+| `SHELF_ARIA2_CONF` | `~/.config/aria2/aria2.conf` | aria2 configuration |
+| `SHELF_ARIA2_RPC` | `http://127.0.0.1:6800/jsonrpc` | aria2 RPC endpoint |
+
+Secrets live in `.env` beside the repository, which git ignores. `shelf.sh`
+creates it only when missing and never overwrites it.
 
 ## API
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/state` | snapshot with summary and per-source status |
-| GET | `/api/events` | server-sent events, one per second |
-| POST | `/api/add` | `{"url": "..."}`, spaces split into several links |
-| POST | `/api/action` | `{"gid": "...", "action": "pause\|resume\|cancel\|delete\|remove"}` |
-| POST | `/api/all/pause` `/api/all/resume` | every engine at once |
-| GET/PUT | `/api/settings` | read or change folder, concurrency, speed limit |
+| `GET` | `/api/state` | snapshot with summary, source and qBittorrent health |
+| `GET` | `/api/events` | server-sent events, one per second |
+| `POST` | `/api/add` | `{"url": "..."}`, spaces split into several links |
+| `POST` | `/api/action` | `{"gid": "...", "action": "pause\|resume\|cancel\|delete\|remove"}` |
+| `POST` | `/api/all/pause` `/api/all/resume` | every engine at once |
+| `GET` `PUT` | `/api/settings` | read or change folder, concurrency, speed limit |
 
 `cancel` and `delete` stop the transfer and remove its files. `remove` clears a
-finished entry and only deletes leftovers when the entry had failed.
+finished entry and deletes leftovers only when the entry had failed.
 
-## Configuration
+## Stremio addon
 
-| Variable | Meaning |
-|---|---|
-| `SHELF_QB_URL`, `SHELF_QB_USER`, `SHELF_QB_PASS` | enable the qBittorrent bridge |
-| `SHELF_IDLE_SECONDS` | idle time before the page process exits |
-| `SHELF_ARIA2_CONF` | aria2 config location, defaults to `~/.config/aria2/aria2.conf` |
+`stremio-addon/` turns the library into a Stremio catalogue. Install it with the
+guided setup or `sudo ./shelf.sh --with-stremio`. Add
+`http://<host>:7020/manifest.json` inside Stremio.
 
-Secrets belong in `.env` next to the repository, which is ignored by git. The
-aria2 RPC stays on loopback; the page has no login and is meant for a trusted
-LAN.
+It reads the download folder directly, keeps no second copy of the library,
+accepts an optional TMDB key for posters (`--tmdb-key`, stored in
+`~/.config/shelf/tmdb.env`), and sleeps on its own idle timer.
 
-## Design notes
+## Development
 
-The visual direction is documented in [DESIGN.md](DESIGN.md): graphite control
-room, amber signal, frosted glass over the owner's starfield photograph, Google
-Sans for text, icons instead of status words, and six CSS-only shooting stars
-that respect `prefers-reduced-motion`.
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/python -m shelf     # http://127.0.0.1:5000
+.venv/bin/pytest              # 65 tests
+```
+
+The addon has a standalone check for its partial-download rule:
+
+```bash
+python3 stremio-addon/tests/test_partial.py
+```
+
+## Security
+
+The page and the addon have no login and are meant for a trusted LAN. The aria2
+RPC binds to loopback. Deletion is refused for any path outside the configured
+download folder. If the page must leave the LAN, put an authenticating reverse
+proxy in front of it; there is no TLS built in.
+
+## Design
+
+The visual direction lives in [DESIGN.md](DESIGN.md): graphite control room,
+amber signal, frosted glass over a starfield photograph, Google Sans text, icons
+instead of status words, and CSS-only shooting stars that respect
+`prefers-reduced-motion`.
 
 ## Licence
 
-Personal project, no licence granted for redistribution. Google Sans is loaded
-from Google's font CDN and self-hosted for private use only; a public deployment
-needs a licensed substitute.
+No licence is granted for redistribution. Google Sans is proprietary: the
+woff2 files are **not** stored in this repository, `shelf.sh` fetches them from
+Google's font CDN on first setup for private use. Everything else here was
+written for this project.

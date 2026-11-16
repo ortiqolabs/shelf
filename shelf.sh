@@ -323,8 +323,39 @@ CONF
 
 # ---------------------------------------------------------------- app
 
+fetch_fonts() {
+  local font_dir="$REPO_DIR/static/fonts"
+  [ -f "$font_dir/google-sans-text-400.woff2" ] && return 0
+  log "fetching web fonts"
+  mkdir -p "$font_dir"
+  run python3 - "$font_dir" <<'FONTS_PY'
+import os, re, sys, urllib.request
+
+dest = sys.argv[1]
+url = ("https://fonts.googleapis.com/css2?family=Google+Sans:wght@500;700"
+       "&family=Google+Sans+Text:wght@400;500;700&display=swap")
+req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"})
+css = urllib.request.urlopen(req, timeout=20).read().decode()
+
+blocks = re.findall(r"(?:/\*\s*(\S+)\s*\*/\s*)?@font-face\s*\{([^}]+)\}", css)
+for subset, body in blocks:
+    if subset not in ("latin", None, ""):
+        continue
+    family = re.search(r"font-family:\s*'([^']+)'", body).group(1)
+    weight = re.search(r"font-weight:\s*(\d+)", body).group(1)
+    match = re.search(r"src:\s*url\((https://[^)]+)\)", body)
+    if not match:
+        continue
+    slug = "google-sans" if family == "Google Sans" else "google-sans-text"
+    path = os.path.join(dest, f"{slug}-{weight}.woff2")
+    urllib.request.urlretrieve(match.group(1), path)
+    print("  ", os.path.basename(path))
+FONTS_PY
+}
+
 install_app() {
   require_commands python3 curl systemctl
+  fetch_fonts
   log "python environment in $REPO_DIR/.venv"
   if [ ! -x "$REPO_DIR/.venv/bin/python" ]; then
     run python3 -m venv "$REPO_DIR/.venv"

@@ -22,6 +22,10 @@ htmlcov/
 stats.json
 *.session
 
+# Proprietary fonts are fetched at setup time, never committed
+static/fonts/*.woff2
+!static/fonts/.gitkeep
+
 # Logs and OS noise
 *.log
 .DS_Store
