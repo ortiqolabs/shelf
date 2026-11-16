@@ -8,6 +8,7 @@ cached, because the library has none.
 import asyncio
 import base64
 import hashlib
+from datetime import datetime, timezone
 import html
 import io
 import json
@@ -189,6 +190,28 @@ def cfg_name(request: Request) -> str:
     return name[:40] or DEFAULT_NAME
 
 
+def released_ms(value):
+    """Stremio's core accepts epoch milliseconds or RFC3339, never a bare date."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value).strip()
+    if text.isdigit():
+        return int(text)
+    text = text.replace("Z", "+00:00")
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        try:
+            moment = datetime.strptime(text[:10], "%Y-%m-%d")
+        except ValueError:
+            return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return int(moment.timestamp() * 1000)
+
+
 def base_url(request: Request) -> str:
     cfg = getattr(request.state, "cfg", None) or {}
     override = cfg.get("b") or os.environ.get("SHELF_PUBLIC_URL")
@@ -316,7 +339,7 @@ async def tmdb_details(kind: str, tmdb_id: int) -> dict:
         "director": [c.get("name") for c in crew if c.get("job") == "Director"][:3],
         "background": f"{TMDB_IMG}/w1280{d['backdrop_path']}" if d.get("backdrop_path") else "",
         "poster": f"{TMDB_IMG}/w500{d['poster_path']}" if d.get("poster_path") else "",
-        "released": released,
+        "released": released_ms(released),
         "releaseInfo": released[:4],
         "links": [],
     }
@@ -430,7 +453,7 @@ async def details(kind: str, title: str, year: str | None, key: str | None = Non
                     "director": meta.get("director") or [],
                     "writer": meta.get("writer") or [],
                     "country": meta.get("country") or "",
-                    "released": meta.get("released") or "",
+                    "released": released_ms(meta.get("released")),
                     "releaseInfo": meta.get("releaseInfo") or meta.get("year") or "",
                     "imdbRating": meta.get("imdbRating") or "",
                     "background": meta.get("background") or "",
@@ -573,7 +596,7 @@ async def manifest(request: Request):
     return JSONResponse(
         {
             "id": "org.shelf.media",
-            "version": "1.2.0",
+            "version": "1.2.1",
             "name": cfg_name(request),
             "description": f"Movies and shows from {cfg_name(request)}.",
             "types": ["movie", "series"],
