@@ -4,6 +4,7 @@
 #
 #   ./shelf.sh                     set everything up (default)
 #   ./shelf.sh --setup             same, explicit
+#   ./shelf.sh --update            pull the latest code, then set everything up
 #   ./shelf.sh --start|--stop|--restart|--status|--logs|--uninstall
 #
 # Setup installs aria2 and the Python environment, writes the aria2 config,
@@ -79,6 +80,7 @@ Usage: ./shelf.sh [action] [options]
 
 Actions
   (none), --setup     install or refresh everything, then start it
+  --update            pull the latest code, then set everything up
   --start             start aria2 and the page
   --stop              stop both
   --restart           restart both
@@ -89,7 +91,7 @@ Actions
   --help, -h          this text
   --version, -v       print the version
 
-Options for --setup
+Options for --setup and --update
   --dir PATH          download folder (default: /media/Movies_and_Shows if it
                       exists, otherwise ~/Downloads)
   --share PATH        folder to share over Samba (default: the download folder)
@@ -118,6 +120,7 @@ Examples
   sudo ./shelf.sh --yes                 defaults, no questions
   sudo ./shelf.sh --with-stremio --dir /srv/media --name Media --write
   ./shelf.sh --stremio-first --stremio-key \$STREMIO_AUTH_KEY
+  sudo ./shelf.sh --update
   ./shelf.sh --status
 EOF
 }
@@ -127,6 +130,7 @@ EOF
 while [ $# -gt 0 ]; do
   case "$1" in
     --setup)        ACTION="setup" ;;
+    --update)       ACTION="update" ;;
     --start)        ACTION="start" ;;
     --stop)         ACTION="stop" ;;
     --restart)      ACTION="restart" ;;
@@ -172,7 +176,7 @@ need_root() {
 }
 
 case "$ACTION" in
-  setup|start|stop|restart|logs|uninstall) need_root "$@" ;;
+  setup|update|start|stop|restart|logs|uninstall) need_root "$@" ;;
 esac
 
 # ---------------------------------------------------------------- guided setup
@@ -337,7 +341,7 @@ fetch_fonts() {
   [ -f "$font_dir/google-sans-text-400.woff2" ] && return 0
   log "fetching web fonts"
   mkdir -p "$font_dir"
-  run python3 - "$font_dir" <<'FONTS_PY'
+  if ! run python3 - "$font_dir" <<'FONTS_PY'
 import os, re, sys, urllib.request
 
 dest = sys.argv[1]
@@ -360,6 +364,9 @@ for subset, body in blocks:
     urllib.request.urlretrieve(match.group(1), path)
     print("  ", os.path.basename(path))
 FONTS_PY
+  then
+    warn "could not fetch the web fonts; the page will fall back to system fonts"
+  fi
   [ "$DRY_RUN" = "yes" ] || chown -R "$RUN_USER" "$font_dir"
 }
 
@@ -687,6 +694,37 @@ do_setup() {
   do_status
 }
 
+do_update() {
+  # under sudo, run git as the repo owner so .git stays theirs
+  local git=(git)
+  if [ "$(id -u)" -eq 0 ] && [ "$RUN_USER" != "root" ] \
+     && command -v runuser >/dev/null 2>&1; then
+    git=(runuser -u "$RUN_USER" -- git)
+  fi
+
+  "${git[@]}" -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || die "$REPO_DIR is not a git checkout; --update needs one"
+  [ -z "$("${git[@]}" -C "$REPO_DIR" status --porcelain)" ] \
+    || die "working tree has local changes; commit or stash them first"
+
+  local before after
+  before="$("${git[@]}" -C "$REPO_DIR" rev-parse HEAD)"
+  log "pulling the latest code in $REPO_DIR"
+  run "${git[@]}" -C "$REPO_DIR" pull --ff-only
+  after="$("${git[@]}" -C "$REPO_DIR" rev-parse HEAD)"
+  if [ "$DRY_RUN" = "yes" ]; then
+    note "dry run: the pull is not applied"
+  elif [ "$before" = "$after" ]; then
+    note "already up to date"
+  else
+    note "updated to $("${git[@]}" -C "$REPO_DIR" rev-parse --short HEAD)"
+  fi
+
+  ACTION="setup"
+  YES="yes"
+  do_setup
+}
+
 do_status() {
   local ip
   ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
@@ -741,6 +779,7 @@ do_stremio_first() {
 
 case "$ACTION" in
   setup)     do_setup ;;
+  update)    do_update ;;
   start)     start_services; do_status ;;
   stop)      stop_services ;;
   restart)   stop_services; start_services; do_status ;;
