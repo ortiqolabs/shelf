@@ -1,0 +1,24 @@
+[project]
+name = "shelf"
+version = "1.0.0"
+description = "One page download station for aria2, served from a Raspberry Pi"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn==0.34.0",
+    "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["shelf"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

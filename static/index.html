@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Shelf</title>
+<meta name="theme-color" content="#0b0b0c" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="preload" href="/fonts/google-sans-text-400.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="preload" href="/img/bg.webp" as="image" type="image/webp" />
+<link rel="stylesheet" href="/app.css?v=14" />
+</head>
+<body>
+<div class="sky" aria-hidden="true">
+  <i class="star s1"></i>
+  <i class="star s2"></i>
+  <i class="star s3"></i>
+  <i class="star s4"></i>
+  <i class="star s5"></i>
+  <i class="star s6"></i>
+  <i class="star s7"></i>
+  <i class="star s8"></i>
+  <i class="star s9"></i>
+  <i class="star s10"></i>
+  <i class="star s11"></i>
+  <i class="star s12"></i>
+  <i class="star s16"></i>
+  <i class="star s15"></i>
+  <i class="star s14"></i>
+  <i class="star s13"></i>
+</div>
+
+<header class="top">
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M3 4.5h14M3 10h14M3 15.5h9" />
+    </svg>
+    <span class="wordmark">Shelf</span>
+  </div>
+
+  <div class="live" id="live" aria-live="polite" hidden>
+    <span class="state light" id="live-dot" data-state="idle"></span>
+    <span class="speed mono" id="total-speed">0 B/s</span>
+    <span class="left mono" id="total-left"></span>
+  </div>
+
+  <div class="top-actions">
+    <button class="ghost" id="pause-all" type="button">Pause All</button>
+    <button class="ghost" id="resume-all" type="button">Resume All</button>
+  </div>
+</header>
+
+<main>
+  <section class="composer" aria-label="Add a download">
+    <form id="add-form" autocomplete="off">
+      <label class="sr-only" for="url">Magnet link or direct URL</label>
+      <input id="url" name="url" type="text" inputmode="url" enterkeyhint="go"
+             spellcheck="false" autocapitalize="off" autocomplete="off"
+             placeholder="Paste a Magnet or a Direct Link" />
+      <button class="primary" type="submit">Add</button>
+    </form>
+    <p class="status" id="hint" role="status" aria-live="polite">
+      Magnets, Torrents and Direct Links Supported
+    </p>
+  </section>
+
+  <section class="queue" aria-label="Downloads">
+    <div id="groups"></div>
+    <div class="empty" id="empty" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 19h16"/></svg>
+      <p>Queue Is Empty</p>
+      <span>Paste a Link Above to Start the First Download</span>
+    </div>
+  </section>
+</main>
+
+<script src="/app.js?v=7"></script>
+</body>
+</html>

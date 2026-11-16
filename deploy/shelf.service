@@ -1,0 +1,23 @@
+[Unit]
+Description=Shelf download page
+After=network-online.target aria2.service
+Wants=aria2.service
+Requires=shelf.socket
+After=shelf.socket
+
+[Service]
+Type=simple
+User=arnav
+Group=arnav
+WorkingDirectory=/home/arnav/shelf
+Environment=SHELF_IDLE_SECONDS=900
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/arnav/shelf/.venv/bin/uvicorn shelf.web:app --fd 3 --proxy-headers
+StandardInput=null
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+
+[Install]
+Also=shelf.socket
+WantedBy=multi-user.target

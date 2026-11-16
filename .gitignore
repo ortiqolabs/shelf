@@ -1,0 +1,19 @@
+# Byte-compiled and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Packaging
+*.egg-info/
+build/
+dist/
+
+# Local runtime state
+stats.json
+*.session
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
