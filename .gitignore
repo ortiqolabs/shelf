@@ -1,19 +1,33 @@
-# Byte-compiled and caches
+# Python
 __pycache__/
 *.py[cod]
-.pytest_cache/
-.venv/
-
-# Packaging
 *.egg-info/
 build/
 dist/
+.venv/
+venv/
 
-# Local runtime state
+# Test and tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local secrets and runtime state
+.env
+.env.*
+!.env.example
+.aria2-secret
 stats.json
 *.session
 
-# Editors and OS
+# Logs and OS noise
+*.log
 .DS_Store
+Thumbs.db
+
+# Editors
 .idea/
 .vscode/
+*.swp

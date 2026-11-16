@@ -14,11 +14,13 @@ from pydantic import BaseModel
 
 from . import config
 from .aria2 import Aria2, summary
+from .qbittorrent import QB_PREFIX, QbError, Qbittorrent
 
 IDLE_SECONDS = config.IDLE_SECONDS
 
 app = FastAPI(title="Shelf", docs_url=None, redoc_url=None)
 aria2 = Aria2()
+qb = Qbittorrent()
 
 state = {"last_seen": time.time(), "streams": 0}
 
@@ -62,11 +64,23 @@ async def start_watchdog() -> None:
     asyncio.create_task(watchdog())
 
 
+async def snapshot() -> dict:
+    """One queue from both daemons; aria2 always renders, even when qB is down."""
+    body = await aria2.collect()
+    items = list(body.get("items") or [])
+    if qb.enabled:
+        bridge = await qb.collect()
+        items.extend(bridge["items"])
+        body["speed"] = int(body.get("speed") or 0) + bridge["speed"]
+        body["qbt"] = {"ok": not bridge["error"], "error": bridge["error"]}
+    body["items"] = items
+    body["summary"] = summary(items)
+    return body
+
+
 @app.get("/api/state")
 async def get_state() -> dict:
-    snapshot = await aria2.collect()
-    snapshot["summary"] = summary(snapshot["items"])
-    return snapshot
+    return await snapshot()
 
 
 @app.get("/api/events")
@@ -76,9 +90,7 @@ async def events() -> StreamingResponse:
         try:
             while True:
                 state["last_seen"] = time.time()
-                snapshot = await aria2.collect()
-                snapshot["summary"] = summary(snapshot["items"])
-                yield f"data: {json.dumps(snapshot)}\n\n"
+                yield f"data: {json.dumps(await snapshot())}\n\n"
                 await asyncio.sleep(1)
         finally:
             state["streams"] -= 1
@@ -106,8 +118,30 @@ async def add(body: AddBody) -> dict:
     return {"added": added}
 
 
+async def qb_action(torrent_hash: str, action: str) -> dict:
+    if not qb.enabled:
+        raise HTTPException(400, "qBittorrent Is Not Configured")
+    handler = {
+        "pause": qb.pause,
+        "resume": qb.resume,
+        "cancel": qb.delete,  # stop the transfer and remove its files
+        "delete": qb.delete,
+        "remove": qb.remove,  # clear the entry, keep the files
+    }.get(action)
+    if not handler:
+        raise HTTPException(400, "Unknown action")
+    try:
+        await handler(torrent_hash)
+    except QbError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True}
+
+
 @app.post("/api/action")
 async def action(body: ActionBody) -> dict:
+    if body.gid.startswith(QB_PREFIX):
+        return await qb_action(body.gid[len(QB_PREFIX):], body.action)
+
     if body.action in ("cancel", "delete"):
         await aria2.purge(body.gid)
         return {"ok": True}
@@ -137,6 +171,12 @@ async def pause_or_resume_everything(verb: str) -> dict:
     if not method:
         raise HTTPException(400, "Unknown action")
     await aria2.call(method)
+    if not qb.enabled:
+        return {"ok": True}
+    try:
+        await (qb.pause_all() if verb == "pause" else qb.resume_all())
+    except QbError as exc:
+        return {"ok": True, "qbt": {"ok": False, "error": str(exc)}}
     return {"ok": True}
 
 

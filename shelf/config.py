@@ -1,4 +1,4 @@
-"""Everything that comes from the environment: paths, the aria2 secret, timers."""
+"""Everything that comes from the environment: paths, secrets, timers."""
 
 from __future__ import annotations
 
@@ -12,6 +12,11 @@ ARIA2_CONF = Path(
     os.environ.get("SHELF_ARIA2_CONF", Path.home() / ".config" / "aria2" / "aria2.conf")
 )
 ARIA2_RPC = os.environ.get("SHELF_ARIA2_RPC", "http://127.0.0.1:6800/jsonrpc")
+
+# the qBittorrent bridge stays off unless all three are set
+QB_URL = os.environ.get("SHELF_QB_URL", "")
+QB_USER = os.environ.get("SHELF_QB_USER", "")
+QB_PASS = os.environ.get("SHELF_QB_PASS", "")
 
 # the service exits after this long without a request or an open event stream
 IDLE_SECONDS = int(os.environ.get("SHELF_IDLE_SECONDS", "900"))

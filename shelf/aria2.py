@@ -116,6 +116,7 @@ def shape(item: dict) -> dict:
     files = item.get("files") or []
     return {
         "gid": item.get("gid"),
+        "source": "aria2",
         "name": name_of(item),
         "status": status,
         "bucket": BUCKET.get(status, "queued"),

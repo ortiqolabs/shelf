@@ -12,6 +12,7 @@ Group=arnav
 WorkingDirectory=/home/arnav/shelf
 Environment=SHELF_IDLE_SECONDS=900
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/arnav/shelf/.env
 ExecStart=/home/arnav/shelf/.venv/bin/uvicorn shelf.web:app --fd 3 --proxy-headers
 StandardInput=null
 Restart=on-failure

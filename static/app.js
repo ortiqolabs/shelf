@@ -118,7 +118,7 @@ function buildRow(item) {
     <div class="body">
       <div class="line1"><span class="name"></span><span class="pct mono"></span></div>
       <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div>
-      <div class="line2"><span class="meta"></span><span class="rate mono"></span></div>
+      <div class="line2"><span class="meta"></span><span class="src"></span><span class="rate mono"></span></div>
     </div>
     <div class="acts"></div>`;
   return row;
@@ -145,7 +145,7 @@ function syncActions(row, item) {
   }
 }
 
-function patch(row, item) {
+function patch(row, item, showSource) {
   row.dataset.bucket = item.bucket;
   row.querySelector(".name").textContent = item.name;
   row.querySelector(".name").title = item.name;
@@ -166,6 +166,9 @@ function patch(row, item) {
   bar.setAttribute("aria-label", `${item.name} progress`);
   row.querySelector(".bar i").style.transform = `scaleX(${item.total ? item.percent / 100 : 0})`;
   row.querySelector(".meta").textContent = metaText(item);
+  const src = row.querySelector(".src");
+  src.textContent = showSource ? item.source || "" : "";
+  src.hidden = !src.textContent;
   row.querySelector(".rate").textContent = item.bucket === "active" ? speed(item.down) : "";
   syncActions(row, item);
 }
@@ -185,6 +188,8 @@ function groupShell(key, title) {
 
 function render(state) {
   const items = state.items || [];
+  // the qbt block exists whenever the bridge is configured, even with no torrents
+  const showSource = Boolean(state.qbt);
   const byGroup = new Map(GROUPS.map(([k]) => [k, []]));
   for (const it of items) {
     const list = byGroup.get(it.bucket);
@@ -205,7 +210,7 @@ function render(state) {
     for (const item of list) {
       let row = rows.get(item.gid);
       if (!row) { row = buildRow(item); rows.set(item.gid, row); }
-      patch(row, item);
+      patch(row, item, showSource);
       if (row.parentElement !== group) group.append(row);
     }
   }

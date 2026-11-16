@@ -444,6 +444,8 @@ main {
 
 .meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.src { flex: none; font-size: 14px; color: var(--muted); }
+
 .rate { flex: none; font-weight: 500; color: var(--text-2); }
 
 .acts { display: flex; gap: 8px; flex: none; align-self: center; }
