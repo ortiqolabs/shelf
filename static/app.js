@@ -10,6 +10,7 @@ const ICONS = {
   pause: '<path d="M8.5 5.5v9M15.5 5.5v9"/>',
   resume: '<path d="M8 5.5l8 4.5-8 4.5z"/>',
   cancel: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
+  retry: '<path d="M18.5 12a6.5 6.5 0 1 1-1.9-4.6M18.5 5v4.5H14"/>',
   delete: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>',
 };
 
@@ -35,6 +36,7 @@ const LABEL = {
   pause: "Pause",
   resume: "Resume",
   cancel: "Stop",
+  retry: "Retry",
   delete: "Delete",
 };
 
@@ -59,6 +61,52 @@ function bytes(n) {
 }
 
 const speed = (n) => `${bytes(n)}/s`;
+
+const UNITS = ["B", "KB", "MB", "GB", "TB"];
+
+// one decimal with .0 trimmed, so "34.2 GB" and "58 GB" both read right
+function diskBytes(n) {
+  if (!isFinite(n) || n <= 0) return "0 B";
+  let i = 0;
+  while (n >= 1024 && i < UNITS.length - 1) { n /= 1024; i++; }
+  return `${i === 0 ? Math.round(n) : n.toFixed(1).replace(/\.0$/, "")} ${UNITS[i]}`;
+}
+
+const diskEl = $("disk");
+
+function renderDisk(disk) {
+  // the field only becomes numeric once the backend ships it; anything else hides the line
+  if (!disk || typeof disk.free !== "number" || typeof disk.total !== "number" || disk.total <= 0) {
+    diskEl.hidden = true;
+    return;
+  }
+  const free = Math.max(disk.free, 0);
+  const total = disk.total;
+  const low = free / total < 0.05;
+  diskEl.textContent = `${low ? "Low disk · " : ""}${diskBytes(free)} free of ${diskBytes(total)}`;
+  diskEl.dataset.low = String(low);
+  diskEl.hidden = false;
+}
+
+const engineEl = $("engine");
+let engine = "aria2";
+let engineWired = false;
+
+function renderEngine(qbt) {
+  const available = Boolean(qbt && qbt.ok);
+  engineEl.hidden = !available;
+  if (!engineWired) {
+    engineWired = true;
+    engineEl.addEventListener("click", (event) => {
+      const btn = event.target.closest("button[data-engine]");
+      if (!btn) return;
+      engine = btn.dataset.engine;
+      for (const b of engineEl.children) {
+        b.setAttribute("aria-pressed", String(b === btn));
+      }
+    });
+  }
+}
 
 function etaFrom(seconds) {
   const s = Math.round(seconds);
@@ -97,6 +145,7 @@ function metaText(item) {
 function actionsFor(item) {
   if (item.bucket === "active" || item.bucket === "queued") return ["pause", "cancel"];
   if (item.bucket === "paused") return ["resume", "cancel"];
+  if (item.bucket === "failed") return ["retry", "delete"];
   return ["delete"];
 }
 
@@ -217,6 +266,8 @@ function render(state) {
 
   const s = state.summary || {};
   emptyEl.hidden = items.length > 0;
+  renderDisk(state.disk);
+  renderEngine(state.qbt);
 
   // the live cluster only exists while bytes are moving
   const running = s.active > 0;
@@ -282,11 +333,11 @@ $("add-form").addEventListener("submit", async (event) => {
     const r = await fetch("/api/add", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify(engineEl.hidden ? { url } : { url, engine }),
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      say(body.detail || "aria2 Rejected That Link", "error");
+      say(body.detail || "That Link Was Rejected", "error");
       return;
     }
     input.value = "";

@@ -5,10 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Shelf</title>
 <meta name="theme-color" content="#0b0b0c" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<link rel="manifest" href="/manifest.webmanifest?v=1" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/icon-192.png?v=1" />
 <link rel="preload" href="/fonts/google-sans-text-400.woff2" as="font" type="font/woff2" crossorigin />
 <link rel="preload" href="/img/bg.webp" as="image" type="image/webp" />
-<link rel="stylesheet" href="/app.css?v=15" />
+<link rel="stylesheet" href="/app.css?v=16" />
 </head>
 <body>
 <div class="sky" aria-hidden="true">
@@ -63,11 +66,16 @@
       <input id="url" name="url" type="text" inputmode="url" enterkeyhint="go"
              spellcheck="false" autocapitalize="off" autocomplete="off"
              placeholder="Paste a Magnet or a Direct Link" />
+      <div class="engine" id="engine" role="group" aria-label="Download engine" hidden>
+        <button type="button" data-engine="aria2" aria-pressed="true">aria2</button>
+        <button type="button" data-engine="qbittorrent" aria-pressed="false">qBittorrent</button>
+      </div>
       <button class="primary" type="submit">Add</button>
     </form>
     <p class="status" id="hint" role="status" aria-live="polite">
       Magnets, Torrents and Direct Links Supported
     </p>
+    <p class="disk" id="disk" hidden></p>
   </section>
 
   <section class="queue" aria-label="Downloads">
@@ -80,6 +88,6 @@
   </section>
 </main>
 
-<script src="/app.js?v=8"></script>
+<script src="/app.js?v=9"></script>
 </body>
 </html>
