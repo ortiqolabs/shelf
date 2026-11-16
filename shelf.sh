@@ -390,7 +390,6 @@ UNIT
   write_file /etc/systemd/system/$APP.socket 644 <<UNIT
 [Unit]
 Description=Shelf socket (wakes the page on demand)
-PartOf=$APP.service
 
 [Socket]
 ListenStream=0.0.0.0:$PORT
@@ -457,7 +456,6 @@ install_addon() {
   write_file /etc/systemd/system/stremio-shelf.socket 644 <<UNIT
 [Unit]
 Description=Shelf addon for Stremio (socket, wakes on demand)
-PartOf=stremio-shelf.service
 
 [Socket]
 ListenStream=0.0.0.0:$ADDON_PORT
