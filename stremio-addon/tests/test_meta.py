@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import app  # noqa: E402
 
 
-def main():
+def test_released_ms():
     # Stremio's core only accepts epoch milliseconds or RFC3339 here
     assert app.released_ms("2026-11-05") == 1793836800000
     assert app.released_ms("2026-11-05T00:00:00Z") == 1793836800000
@@ -15,6 +15,10 @@ def main():
     assert app.released_ms("") is None
     assert app.released_ms(None) is None
     assert app.released_ms("not a date") is None
+
+
+def main():
+    test_released_ms()
     print("meta rules ok")
 
 

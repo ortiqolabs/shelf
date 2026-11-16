@@ -249,6 +249,43 @@ def _save_matches():
     os.replace(tmp, MATCH)
 
 
+CACHE_MAX_AGE = 30 * 24 * 3600
+CACHE_MAX_FILES = 500
+
+
+def prune_cache(directory: str, max_age: float, max_files: int) -> int:
+    """Delete posters older than max_age, then trim the oldest beyond max_files."""
+    now = time.time()
+    try:
+        entries = [e for e in os.scandir(directory) if e.name.endswith(".png") and e.is_file()]
+    except OSError:
+        return 0
+    removed = 0
+    kept = []
+    for entry in entries:
+        try:
+            mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+        if now - mtime > max_age:
+            try:
+                os.unlink(entry.path)
+                removed += 1
+                continue
+            except OSError:
+                pass
+        kept.append((mtime, entry.path))
+    kept.sort()
+    excess = len(kept) - max(0, max_files)
+    for _, path in kept[:max(0, excess)]:
+        try:
+            os.unlink(path)
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 def norm(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
@@ -597,7 +634,7 @@ async def manifest(request: Request):
     return JSONResponse(
         {
             "id": "org.shelf.media",
-            "version": "1.2.2",
+            "version": "1.2.3",
             "name": cfg_name(request),
             "description": f"Movies and shows from {cfg_name(request)}.",
             "types": ["movie", "series"],
@@ -1101,6 +1138,9 @@ async def root(request: Request):
 
 @app.on_event("startup")
 async def watchdog_start():
+    removed = await asyncio.to_thread(prune_cache, CACHE, CACHE_MAX_AGE, CACHE_MAX_FILES)
+    print(f"shelf-stremio: poster cache pruned, {removed} removed", flush=True)
+
     async def watchdog():
         tick = max(5, min(60, IDLE_SECONDS // 2))
         while True:
