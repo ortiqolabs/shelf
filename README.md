@@ -175,6 +175,21 @@ It reads the download folder directly, keeps no second copy of the library,
 accepts an optional TMDB key for posters (`--tmdb-key`, stored in
 `~/.config/shelf/tmdb.env`), and sleeps on its own idle timer.
 
+### Row order
+
+Stremio builds the board from the addon array stored in your account, in that
+order; installs append, and no manifest field changes it. To put Shelf directly
+under Continue Watching, rewrite that order once:
+
+```bash
+STREMIO_AUTH_KEY=... python3 tools/stremio-priority.py --dry-run
+STREMIO_AUTH_KEY=... python3 tools/stremio-priority.py
+```
+
+The key is your Stremio account key, sent only to `api.strem.io`. The script
+moves Shelf to index 0, keeps every other addon in place, and reads the
+collection back to confirm the change stuck.
+
 ## Development
 
 ```bash
