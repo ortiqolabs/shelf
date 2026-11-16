@@ -116,6 +116,15 @@ class Qbittorrent:
     async def resume(self, torrent_hash: str) -> None:
         await self._call("POST", "/api/v2/torrents/resume", {"hashes": torrent_hash})
 
+    async def add(self, urls: str | list[str]) -> None:
+        """Queue magnets or torrent URLs by link."""
+        if isinstance(urls, list):
+            urls = "\n".join(urls)
+        await self._call("POST", "/api/v2/torrents/add", {"urls": urls})
+
+    async def recheck(self, torrent_hash: str) -> None:
+        await self._call("POST", "/api/v2/torrents/recheck", {"hashes": torrent_hash})
+
     async def delete(self, torrent_hash: str) -> None:
         await self._call(
             "POST",

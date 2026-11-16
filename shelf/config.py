@@ -21,6 +21,9 @@ QB_PASS = os.environ.get("SHELF_QB_PASS", "")
 # the service exits after this long without a request or an open event stream
 IDLE_SECONDS = int(os.environ.get("SHELF_IDLE_SECONDS", "900"))
 
+# an access token gates every request; empty means the page stays open
+TOKEN = os.environ.get("SHELF_TOKEN", "")
+
 
 def conf_value(key: str, default: str = "") -> str:
     """Read a single key from aria2.conf, tolerating a missing file."""

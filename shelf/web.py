@@ -4,11 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
+import secrets
+import shutil
 import time
+from urllib.parse import parse_qsl, urlencode, urlparse
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -27,6 +37,7 @@ state = {"last_seen": time.time(), "streams": 0}
 
 class AddBody(BaseModel):
     url: str
+    engine: str = "aria2"
 
 
 class ActionBody(BaseModel):
@@ -55,6 +66,76 @@ async def track_and_cache(request, call_next):
     return response
 
 
+@app.middleware("http")
+async def require_token(request: Request, call_next):
+    """Gate every request behind SHELF_TOKEN when one is configured."""
+    token = config.TOKEN
+    if not token:
+        return await call_next(request)
+    query = request.query_params.get("token")
+    supplied = query or request.headers.get("x-shelf-token") or request.cookies.get("shelf_token")
+    if supplied and secrets.compare_digest(supplied, token):
+        if query:
+            response = RedirectResponse(_strip_token(request), status_code=307)
+            response.set_cookie(
+                "shelf_token",
+                token,
+                max_age=31536000,
+                httponly=True,
+                samesite="lax",
+                path="/",
+            )
+            return response
+        return await call_next(request)
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"detail": "Missing or invalid token"}, status_code=401)
+    return PlainTextResponse("Unauthorized", status_code=401)
+
+
+def _strip_token(request: Request) -> str:
+    """The same URL with the token query parameter removed."""
+    pairs = [(k, v) for k, v in parse_qsl(request.url.query, keep_blank_values=True) if k != "token"]
+    query = urlencode(pairs)
+    return request.url.path + (f"?{query}" if query else "")
+
+
+ADD_LIMIT = 10
+ADD_WINDOW = 60.0
+_add_hits: dict[str, list[float]] = {}
+
+
+def _add_wait(ip: str) -> float:
+    """Seconds before this client may add again; 0 when allowed."""
+    now = time.monotonic()
+    hits = [t for t in _add_hits.get(ip, []) if now - t < ADD_WINDOW]
+    if hits:
+        _add_hits[ip] = hits
+    else:
+        _add_hits.pop(ip, None)
+    if len(hits) < ADD_LIMIT:
+        return 0.0
+    return ADD_WINDOW - (now - hits[0])
+
+
+def _record_add(ip: str) -> None:
+    _add_hits.setdefault(ip, []).append(time.monotonic())
+
+
+def disk() -> dict:
+    """Free and total space on the configured download volume."""
+    path = settings.current()["downloadDir"]
+    try:
+        usage = shutil.disk_usage(path)
+    except OSError:
+        return {"free": 0, "total": 0, "path": path}
+    return {"free": usage.free, "total": usage.total, "path": path}
+
+
+def _torrent_link(link: str) -> bool:
+    """True for a magnet or a URL whose path ends in .torrent."""
+    return link.lower().startswith("magnet:") or urlparse(link).path.lower().endswith(".torrent")
+
+
 async def watchdog() -> None:
     """Exit when nobody is looking. systemd wakes us on the next request."""
     while True:
@@ -81,6 +162,7 @@ async def snapshot() -> dict:
         body["qbt"] = {"ok": not bridge["error"], "error": bridge["error"]}
     body["items"] = items
     body["summary"] = summary(items)
+    body["disk"] = disk()
     return body
 
 
@@ -109,24 +191,55 @@ async def events() -> StreamingResponse:
 
 
 @app.post("/api/add")
-async def add(body: AddBody) -> dict:
+async def add(body: AddBody, request: Request) -> dict:
     raw = body.url.strip()
     if not raw:
         raise HTTPException(400, "Empty link")
+    if body.engine not in ("aria2", "qbittorrent"):
+        raise HTTPException(400, "Unknown engine")
+    ip = request.client.host if request.client else ""
+    wait = _add_wait(ip)
+    if wait > 0:
+        raise HTTPException(
+            429,
+            "Too many links, try again later",
+            headers={"Retry-After": str(max(1, math.ceil(wait)))},
+        )
     # a pasted list is fine: every link starts its own transfer
+    links = [x for x in re.split(r"\s+", raw) if x]
+    if body.engine == "qbittorrent":
+        if not qb.enabled:
+            raise HTTPException(400, "qBittorrent is not configured")
+        if not all(_torrent_link(link) for link in links):
+            raise HTTPException(400, "qBittorrent only accepts magnets and torrent files")
+        try:
+            await qb.add(links)
+        except QbError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        _record_add(ip)
+        return {"added": links}
+
     added: list[str] = []
-    for link in [x for x in re.split(r"\s+", raw) if x]:
+    for link in links:
         result = await aria2.call("aria2.addUri", [[link], {"pause": "false"}])
         if isinstance(result, str):
             added.append(result)
         else:
             raise HTTPException(400, (result or {}).get("message", "aria2 rejected the link"))
+    _record_add(ip)
     return {"added": added}
 
 
 async def qb_action(torrent_hash: str, action: str) -> dict:
     if not qb.enabled:
         raise HTTPException(400, "qBittorrent Is Not Configured")
+    if action == "retry":
+        try:
+            await qb.recheck(torrent_hash)
+            await qb.resume(torrent_hash)
+        except QbError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True}
     handler = {
         "pause": qb.pause,
         "resume": qb.resume,
@@ -147,6 +260,22 @@ async def qb_action(torrent_hash: str, action: str) -> dict:
 async def action(body: ActionBody) -> dict:
     if body.gid.startswith(QB_PREFIX):
         return await qb_action(body.gid[len(QB_PREFIX):], body.action)
+
+    if body.action == "retry":
+        status = await aria2.call("aria2.tellStatus", [body.gid, ["files", "status"]])
+        uri = ""
+        if isinstance(status, dict):
+            for item in status.get("files") or []:
+                uri = next((u.get("uri", "") for u in item.get("uris") or [] if u.get("uri")), "")
+                if uri:
+                    break
+        if not uri:
+            raise HTTPException(400, "No link to retry")
+        result = await aria2.call("aria2.addUri", [[uri], {"pause": "false"}])
+        if not isinstance(result, str):
+            raise HTTPException(400, (result or {}).get("message", "aria2 rejected the link"))
+        await aria2.call("aria2.removeDownloadResult", [body.gid])
+        return {"ok": True, "gid": result}
 
     if body.action in ("cancel", "delete"):
         await aria2.purge(body.gid)

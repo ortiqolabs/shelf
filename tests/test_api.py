@@ -3,14 +3,23 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from shelf import web  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def reset_add_limit():
+    web._add_hits.clear()
+    yield
+    web._add_hits.clear()
+
+
 class FakeAria2:
-    def __init__(self):
+    def __init__(self, uris=None):
         self.calls = []
+        self.uris = uris
         self.transfers = [
             {
                 "gid": "abc",
@@ -36,6 +45,8 @@ class FakeAria2:
 
     async def call(self, method, params=None):
         self.calls.append((method, params))
+        if method == "aria2.tellStatus" and self.uris is not None:
+            return {"status": "error", "files": [{"uris": [{"uri": u} for u in self.uris]}]}
         return "gid-new"
 
     async def files_for(self, gid):
@@ -86,3 +97,22 @@ def test_delete_purges_files():
 def test_unknown_action_is_rejected():
     response = client_with(FakeAria2()).post("/api/action", json={"gid": "abc", "action": "explode"})
     assert response.status_code == 400
+
+
+def test_retry_readds_the_failed_uri():
+    fake = FakeAria2(uris=["https://host/file.bin"])
+    response = client_with(fake).post("/api/action", json={"gid": "abc", "action": "retry"})
+    assert response.status_code == 200
+    assert response.json()["gid"] == "gid-new"
+    assert fake.calls == [
+        ("aria2.tellStatus", ["abc", ["files", "status"]]),
+        ("aria2.addUri", [["https://host/file.bin"], {"pause": "false"}]),
+        ("aria2.removeDownloadResult", ["abc"]),
+    ]
+
+
+def test_retry_without_a_uri_is_rejected():
+    fake = FakeAria2(uris=[])
+    response = client_with(fake).post("/api/action", json={"gid": "abc", "action": "retry"})
+    assert response.status_code == 400
+    assert fake.calls == [("aria2.tellStatus", ["abc", ["files", "status"]])]

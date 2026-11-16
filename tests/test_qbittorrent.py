@@ -11,6 +11,15 @@ from fastapi.testclient import TestClient  # noqa: E402
 from shelf import web  # noqa: E402
 from shelf.qbittorrent import Qbittorrent, bucket_of, shape  # noqa: E402
 
+MAGNET = "magnet:?xt=urn:btih:abc"
+
+
+@pytest.fixture(autouse=True)
+def reset_add_limit():
+    web._add_hits.clear()
+    yield
+    web._add_hits.clear()
+
 TORRENT = {
     "hash": "abc123",
     "name": "Show Pack",
@@ -188,6 +197,26 @@ def test_pause_and_resume_send_the_hash():
     ]
 
 
+def test_add_posts_the_links_as_urls():
+    qbt, fake = client_with()
+    asyncio.run(qbt.add([MAGNET, "https://host/pack.torrent"]))
+    assert actions(fake) == [
+        (
+            "POST",
+            "http://qb.test:4000/api/v2/torrents/add",
+            {"urls": f"{MAGNET}\nhttps://host/pack.torrent"},
+        )
+    ]
+
+
+def test_recheck_sends_the_hash():
+    qbt, fake = client_with()
+    asyncio.run(qbt.recheck("abc123"))
+    assert actions(fake) == [
+        ("POST", "http://qb.test:4000/api/v2/torrents/recheck", {"hashes": "abc123"}),
+    ]
+
+
 def test_delete_removes_files_and_remove_keeps_them():
     qbt, fake = client_with()
     asyncio.run(qbt.delete("abc123"))
@@ -265,6 +294,12 @@ class FakeQb:
     async def resume(self, torrent_hash):
         self.calls.append(("resume", torrent_hash))
 
+    async def add(self, urls):
+        self.calls.append(("add", urls))
+
+    async def recheck(self, torrent_hash):
+        self.calls.append(("recheck", torrent_hash))
+
     async def delete(self, torrent_hash):
         self.calls.append(("delete", torrent_hash))
 
@@ -334,3 +369,54 @@ def test_pause_all_covers_both_sources(monkeypatch):
     response = page_for(monkeypatch, qbt).post("/api/all/pause")
     assert response.status_code == 200
     assert qbt.calls == [("pause_all", None)]
+
+
+def test_qb_retry_rechecks_then_resumes(monkeypatch):
+    qbt = FakeQb()
+    response = page_for(monkeypatch, qbt).post("/api/action", json={"gid": "qb:h1", "action": "retry"})
+    assert response.status_code == 200
+    assert qbt.calls == [("recheck", "h1"), ("resume", "h1")]
+
+
+def test_add_with_qbittorrent_engine_queues_the_magnet(monkeypatch):
+    qbt = FakeQb()
+    response = page_for(monkeypatch, qbt).post(
+        "/api/add", json={"url": MAGNET, "engine": "qbittorrent"}
+    )
+    assert response.status_code == 200
+    assert response.json()["added"] == [MAGNET]
+    assert qbt.calls == [("add", [MAGNET])]
+
+
+def test_add_with_qbittorrent_engine_accepts_a_torrent_url(monkeypatch):
+    qbt = FakeQb()
+    response = page_for(monkeypatch, qbt).post(
+        "/api/add", json={"url": "https://host/pack.torrent", "engine": "qbittorrent"}
+    )
+    assert response.status_code == 200
+    assert qbt.calls == [("add", ["https://host/pack.torrent"])]
+
+
+def test_add_with_qbittorrent_engine_rejects_a_plain_file(monkeypatch):
+    qbt = FakeQb()
+    response = page_for(monkeypatch, qbt).post(
+        "/api/add", json={"url": "https://host/movie.mkv", "engine": "qbittorrent"}
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "qBittorrent only accepts magnets and torrent files"
+    assert qbt.calls == []
+
+
+def test_add_with_qbittorrent_engine_needs_configuration(monkeypatch):
+    response = page_for(monkeypatch, Qbittorrent(url="", user="", password="")).post(
+        "/api/add", json={"url": MAGNET, "engine": "qbittorrent"}
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "qBittorrent is not configured"
+
+
+def test_add_rejects_an_unknown_engine(monkeypatch):
+    response = page_for(monkeypatch, FakeQb()).post(
+        "/api/add", json={"url": MAGNET, "engine": "transmission"}
+    )
+    assert response.status_code == 400
