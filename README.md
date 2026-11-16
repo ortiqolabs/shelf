@@ -71,6 +71,7 @@ active.
 ./shelf.sh --status             # what is running and where
 ./shelf.sh --start | --stop | --restart
 ./shelf.sh --logs [--follow]
+sudo ./shelf.sh --update        # pull, then re-run setup non-interactively
 sudo ./shelf.sh --uninstall     # units and share, keeps files and data
 ```
 
@@ -147,9 +148,23 @@ flowchart LR
 | `SHELF_IDLE_SECONDS` | `900` | idle time before the page process exits |
 | `SHELF_ARIA2_CONF` | `~/.config/aria2/aria2.conf` | aria2 configuration |
 | `SHELF_ARIA2_RPC` | `http://127.0.0.1:6800/jsonrpc` | aria2 RPC endpoint |
+| `SHELF_TOKEN` | unset | auth token for the page; unset or empty turns auth off |
 
 Secrets live in `.env` beside the repository, which git ignores. `shelf.sh`
 creates it only when missing and never overwrites it.
+
+### Auth token
+
+`SHELF_TOKEN` is a shared secret for the page. When it is set, requests to the
+page must carry the same token. Leave it unset or empty and the page behaves as
+before: no token, open to the LAN. Pass it in the environment or in `.env`
+beside the repository:
+
+```bash
+SHELF_TOKEN=... sudo ./shelf.sh --setup
+```
+
+The value is never printed by `shelf.sh`, and `.env` is git-ignored.
 
 ## API
 

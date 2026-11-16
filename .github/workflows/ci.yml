@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e '.[dev]'
+      - run: pytest
+      - name: Shell and addon checks
+        run: |
+          bash -n shelf.sh
+          if [ -f deploy.sh ]; then bash -n deploy.sh; fi
+          pip install pillow
+          for test in test_partial test_poster test_meta test_ranges test_cache; do
+            file="stremio-addon/tests/$test.py"
+            if [ -f "$file" ]; then
+              python3 "$file"
+            else
+              echo "skip $file (not present)"
+            fi
+          done
