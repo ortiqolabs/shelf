@@ -348,6 +348,7 @@ main {
 
 #add-form {
   display: flex;
+  align-items: center;
   gap: 12px;
   padding: 8px;
   background: var(--glass);
@@ -384,6 +385,53 @@ main {
 
 .status[data-tone="error"] { color: var(--bad); font-weight: 500; }
 .status[data-tone="ok"] { color: var(--ok); font-weight: 500; }
+
+.disk {
+  margin: 10px 2px 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.disk[hidden] { display: none; }
+.disk[data-low="true"] { color: var(--amber); }
+
+/* ---------- engine ---------- */
+
+.engine {
+  display: inline-flex;
+  flex: none;
+  height: 44px;
+}
+
+.engine[hidden] { display: none; }
+
+.engine button {
+  height: 100%;
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.engine button:first-child { border-radius: var(--r-control) 0 0 var(--r-control); }
+.engine button:last-child { border-radius: 0 var(--r-control) var(--r-control) 0; margin-left: -1px; }
+
+.engine button[aria-pressed="true"] {
+  position: relative;
+  color: var(--text);
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+}
+
+.engine button:disabled {
+  color: var(--muted);
+  background: transparent;
+  cursor: default;
+}
 
 /* ---------- queue ---------- */
 
@@ -582,11 +630,14 @@ main {
   .composer[data-stuck="true"] { border-bottom-color: var(--line); }
   .composer[data-stuck="true"] .status { margin-top: 10px; }
 
-  #add-form { gap: 8px; padding: 6px; border-radius: 16px; }
-  #url { height: 52px; padding: 0 14px; font-size: 17px; }
-  .primary { min-width: 92px; height: 52px; padding: 0 22px; font-size: 16px; }
+  #add-form { flex-wrap: wrap; gap: 8px; padding: 6px; border-radius: 16px; }
+  #url { order: 1; height: 52px; padding: 0 14px; font-size: 17px; }
+  .primary { order: 2; min-width: 92px; height: 52px; padding: 0 22px; font-size: 16px; }
+  .engine { order: 3; flex: 1 0 100%; }
+  .engine button { flex: 1; }
 
   .status { margin: 12px 2px 0; font-size: 15px; }
+  .disk { margin: 8px 2px 0; }
 
   .group + .group { margin-top: 28px; }
   .group-title { font-size: 17px; }
