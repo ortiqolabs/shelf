@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import app  # noqa: E402
 
 
-def main():
+def test_parse_range():
     size = 1000
     assert app.parse_range(None, size) == (0, 999, 200)
     assert app.parse_range("bytes=0-99", size) == (0, 99, 206)
@@ -20,6 +20,10 @@ def main():
     assert app.parse_range("bytes=abc-def", size) == (0, 999, 200)
     assert app.parse_range("bytes=-0", size) == (0, 999, 200)
     assert app.parse_range("bytes=0-1, 5-6", size) == (0, 1, 206)
+
+
+def main():
+    test_parse_range()
     print("range rules ok")
 
 

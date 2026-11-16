@@ -9,7 +9,7 @@ import app  # noqa: E402
 from PIL import Image  # noqa: E402
 
 
-def check_logo():
+def test_logo():
     body = app.make_logo()
     assert body.startswith(b"\x89PNG\r\n\x1a\n"), "logo is a PNG"
     image = Image.open(io.BytesIO(body))
@@ -17,7 +17,7 @@ def check_logo():
     assert len(body) > 2000, "logo has real pixels"
 
 
-def check_poster():
+def test_poster():
     body = app.make_poster("Aurora Drift", 2025, "demo")
     assert body.startswith(b"\x89PNG\r\n\x1a\n"), "poster is a PNG"
     image = Image.open(io.BytesIO(body))
@@ -25,15 +25,15 @@ def check_poster():
     assert len(body) > 2000, "poster has real pixels"
 
 
-def check_long_titles():
+def test_long_titles():
     for title in ("A" * 200, "Aurora Drift The Long Subtitle Cut 2025", "x"):
         assert app.make_poster(title, None, title)[:4] == b"\x89PNG", title[:20]
 
 
 def main():
-    check_logo()
-    check_poster()
-    check_long_titles()
+    test_logo()
+    test_poster()
+    test_long_titles()
     print("poster rules ok")
 
 
