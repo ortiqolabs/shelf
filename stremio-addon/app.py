@@ -573,7 +573,7 @@ async def manifest(request: Request):
     return JSONResponse(
         {
             "id": "org.shelf.media",
-            "version": "1.1.0",
+            "version": "1.2.0",
             "name": cfg_name(request),
             "description": f"Movies and shows from {cfg_name(request)}.",
             "types": ["movie", "series"],
@@ -809,10 +809,99 @@ async def play(tok: str, name: str, request: Request):
     return StreamingResponse(guarded(), status_code=status, headers=headers, media_type=mtype)
 
 
+def _poster_font(size: int, bold: bool = False):
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+        else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf" if bold
+        else "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except OSError:
+                continue
+    return ImageFont.load_default()
+
+
+def _wrap(draw, text: str, font, width: int, max_lines: int) -> list[str]:
+    words = text.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        trial = f"{current} {word}".strip()
+        if draw.textlength(trial, font=font) <= width or not current:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+        if len(lines) == max_lines:
+            break
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    if len(lines) == max_lines and words:
+        last = lines[-1]
+        while draw.textlength(last + "…", font=font) > width and " " in last:
+            last = last.rsplit(" ", 1)[0]
+        lines[-1] = last + "…"
+    return lines
+
+
+def make_poster(title: str, year, key: str) -> bytes:
+    """A typographic poster in the page's palette, generated once and cached."""
+    digest = hashlib.sha1(key.encode()).digest()
+    wash = 18 + digest[0] % 14
+    image = Image.new("RGB", (400, 600), (11, 11, 13))
+    draw = ImageDraw.Draw(image)
+
+    for step in range(600):
+        ratio = step / 600
+        shade = int(wash * (1 - ratio) ** 2)
+        draw.line([(0, step), (400, step)], fill=(11 + shade, 11 + shade // 2, 13))
+
+    amber = (240, 168, 60)
+    for index in range(3):
+        width_line = 34 if index < 2 else 22
+        draw.rounded_rectangle(
+            [40, 44 + index * 14, 40 + width_line, 50 + index * 14],
+            radius=3, fill=amber,
+        )
+
+    body = _poster_font(34, bold=True)
+    lines = _wrap(draw, title, body, 320, 5)
+    top = 300 - len(lines) * 22
+    for offset, line in enumerate(lines):
+        draw.text((40, top + offset * 44), line, font=body, fill=(240, 240, 243))
+
+    if year:
+        small = _poster_font(20)
+        draw.text((40, top + len(lines) * 44 + 10), str(year), font=small, fill=(178, 180, 188))
+
+    out = io.BytesIO()
+    image.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
+def make_logo() -> bytes:
+    image = Image.new("RGB", (512, 512), (11, 11, 13))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle([0, 0, 511, 511], radius=96, fill=(13, 13, 16))
+    amber = (240, 168, 60)
+    for index, width_line in enumerate((236, 236, 152)):
+        draw.rounded_rectangle(
+            [138, 176 + index * 62, 138 + width_line, 196 + index * 62],
+            radius=10, fill=amber,
+        )
+    out = io.BytesIO()
+    image.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
 @app.get("/poster/{key}.png")
 async def poster(key: str):
     if key == "shelf":
-        return Response(content=make_poster("Shelf", None, "logo"), media_type="image/png")
+        return Response(content=make_logo(), media_type="image/png", headers={"Cache-Control": "public, max-age=604800"})
     cached = os.path.join(CACHE, key + ".png")
     if os.path.exists(cached):
         return Response(content=open(cached, "rb").read(), media_type="image/png")
@@ -820,7 +909,15 @@ async def poster(key: str):
         rel = entry.name
         if hashlib.sha1(rel.encode()).hexdigest()[:16] == key:
             title, year = clean_title(entry.name)
-            return Response(content=make_poster(title, year, rel), media_type="image/png")
+            body = make_poster(title, year, rel)
+            try:
+                os.makedirs(CACHE, exist_ok=True)
+                with open(cached, "wb") as fh:
+                    fh.write(body)
+            except OSError:
+                pass
+            return Response(content=body, media_type="image/png",
+                            headers={"Cache-Control": "public, max-age=604800"})
     raise HTTPException(404, "no poster")
 
 

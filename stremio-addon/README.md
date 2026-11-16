@@ -51,10 +51,9 @@ them out of the catalog until the download finishes.
 ## Files
 
 - `app.py` single file, FastAPI + Pillow
-- `deploy/stremio-shelf.socket` port 7020, wakes the service on first hit
-- `deploy/stremio-shelf.service` uvicorn on the inherited socket, sleeps after
-  30 idle minutes
-- `deploy.sh` copies, builds the venv, installs and restarts
+- `../shelf.sh --with-stremio` builds the venv, writes the units and restarts
+- the socket listens on port 7020 and wakes the service on first hit
+- the service sleeps after 30 idle minutes
 
 ## Playback quality
 

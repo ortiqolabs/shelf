@@ -84,7 +84,7 @@ A healthy library has empty `hidden` and empty `stale_sidecars`.
 ## Before you ship
 
 ```bash
-./deploy.sh                      # copy, venv, units, restart
+../shelf.sh --setup --with-stremio   # venv, units, restart
 ssh raspi 'sudo -n systemctl restart stremio-shelf'
 curl -s http://192.168.1.11:7020/catalog/movie/shelf.json | python3 -m json.tool | head
 ```

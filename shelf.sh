@@ -351,6 +351,7 @@ for subset, body in blocks:
     urllib.request.urlretrieve(match.group(1), path)
     print("  ", os.path.basename(path))
 FONTS_PY
+  [ "$DRY_RUN" = "yes" ] || chown -R "$RUN_USER" "$font_dir"
 }
 
 install_app() {
