@@ -7,6 +7,7 @@ cached, because the library has none.
 
 import asyncio
 import base64
+import email.utils
 import hashlib
 from datetime import datetime, timezone
 import html
@@ -596,7 +597,7 @@ async def manifest(request: Request):
     return JSONResponse(
         {
             "id": "org.shelf.media",
-            "version": "1.2.1",
+            "version": "1.2.2",
             "name": cfg_name(request),
             "description": f"Movies and shows from {cfg_name(request)}.",
             "types": ["movie", "series"],
@@ -780,6 +781,35 @@ def file_iter(path: str, start: int, length: int, chunk: int = 1 << 20):
             yield data
 
 
+def parse_range(header, size: int) -> tuple[int, int, int]:
+    """Return (start, end, status) for a single byte range request."""
+    if not header or not header.startswith("bytes="):
+        return 0, size - 1, 200
+    spec = header[6:].split(",")[0].strip()
+    first, _, last = spec.partition("-")
+    first, last = first.strip(), last.strip()
+    try:
+        if first:
+            start = int(first)
+            end = int(last) if last else size - 1
+        elif last:
+            count = int(last)
+            if count <= 0:
+                return 0, size - 1, 200
+            start = max(0, size - count)
+            end = size - 1
+        else:
+            return 0, size - 1, 200
+    except ValueError:
+        return 0, size - 1, 200
+    if start >= size or start < 0:
+        return 0, -1, 416
+    end = min(end, size - 1)
+    if end < start:
+        return 0, -1, 416
+    return start, end, 206
+
+
 @app.api_route("/play/{tok}/{name}", methods=["GET", "HEAD"])
 async def play(tok: str, name: str, request: Request):
     global last_seen, streams
@@ -789,33 +819,33 @@ async def play(tok: str, name: str, request: Request):
     if mtype in ("application/x-matroska",):
         mtype = "video/x-matroska"
 
-    rng = request.headers.get("range")
-    start, end = 0, size - 1
-    status = 200
-    if rng and rng.startswith("bytes="):
-        spec = rng[6:].split(",")[0].strip()
-        a, _, b = spec.partition("-")
-        if a.strip():
-            start = int(a)
-            end = int(b) if b.strip() else size - 1
-        elif b.strip():  # suffix range: last N bytes
-            start = max(0, size - int(b))
-        end = min(end, size - 1)
-        if start > end or start >= size:
-            return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
-        status = 206
+    stat_info = os.stat(path)
+    etag = f'"{size:x}-{int(stat_info.st_mtime):x}"'
+    start, end, status = parse_range(request.headers.get("range"), size)
+    if status == 416:
+        return Response(status_code=416, headers={
+            "Content-Range": f"bytes */{size}",
+            "Accept-Ranges": "bytes",
+            "ETag": etag,
+        })
 
     length = end - start + 1
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Length": str(length),
         "Content-Type": mtype,
-        "Cache-Control": "no-store",
+        "Content-Disposition": f"inline; filename*=UTF-8''{urllib.parse.quote(name)}",
+        "Cache-Control": "public, max-age=0, must-revalidate",
+        "ETag": etag,
+        "Last-Modified": email.utils.formatdate(stat_info.st_mtime, usegmt=True),
     }
     if status == 206:
         headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+
     if request.method == "HEAD":
         return Response(status_code=status, headers=headers)
+    if request.headers.get("if-none-match") == etag and status == 200:
+        return Response(status_code=304, headers=headers)
 
     last_seen = time.time()
     streams += 1
@@ -1075,7 +1105,7 @@ async def watchdog_start():
         tick = max(5, min(60, IDLE_SECONDS // 2))
         while True:
             await asyncio.sleep(tick)
-            if streams == 0 and time.time() - last_seen > IDLE_SECONDS:
+            if IDLE_SECONDS > 0 and streams == 0 and time.time() - last_seen > IDLE_SECONDS:
                 print("shelf-stremio: idle, sleeping", flush=True)
                 os._exit(0)
 

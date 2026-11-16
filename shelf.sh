@@ -489,7 +489,8 @@ Group=$RUN_USER
 WorkingDirectory=$ADDON_DIR
 EnvironmentFile=-$RUN_HOME/.config/shelf/tmdb.env
 Environment=SHELF_ROOT=$DOWNLOAD_DIR
-Environment=SHELF_IDLE_SECONDS=1800
+# the addon stays awake: sleeping mid-movie breaks resume and seeking
+Environment=SHELF_IDLE_SECONDS=0
 Environment=PYTHONUNBUFFERED=1
 ExecStart=$ADDON_DIR/.venv/bin/uvicorn app:app --fd 3 --proxy-headers
 StandardInput=null
