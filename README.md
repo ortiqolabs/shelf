@@ -182,7 +182,13 @@ order; installs append, and no manifest field changes it. To put Shelf directly
 under Continue Watching, rewrite that order once:
 
 ```bash
-STREMIO_AUTH_KEY=... python3 tools/stremio-priority.py --dry-run
+STREMIO_AUTH_KEY=... ./shelf.sh --stremio-first --dry-run
+STREMIO_AUTH_KEY=... ./shelf.sh --stremio-first
+```
+
+The same thing without the wrapper:
+
+```bash
 STREMIO_AUTH_KEY=... python3 tools/stremio-priority.py
 ```
 

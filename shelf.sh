@@ -29,6 +29,8 @@ DO_FIREWALL="yes"
 WITH_STREMIO="no"
 ADDON_PORT="7020"
 TMDB_KEY=""
+STREMIO_KEY="${STREMIO_AUTH_KEY:-}"
+STREMIO_ID="org.shelf.media"
 YES="no"
 CONFIGURED="no"
 DRY_RUN="no"
@@ -82,6 +84,7 @@ Actions
   --restart           restart both
   --status            show what is running and where to reach it
   --logs              last 60 log lines (add --follow to stream)
+  --stremio-first     move Shelf to the top of the Stremio addon list
   --uninstall         remove units and the Samba share, keep files and data
   --help, -h          this text
   --version, -v       print the version
@@ -96,6 +99,8 @@ Options for --setup
   --no-stremio        skip the addon (default)
   --addon-port PORT   addon port (default: 7020)
   --tmdb-key KEY      store a TMDB key for posters, optional
+  --stremio-key KEY   Stremio account key, for --stremio-first
+  --stremio-id ID     manifest id to move first (default org.shelf.media)
   --no-samba          skip Samba setup
   --no-firewall       skip firewall rules
   --port PORT         page port (default: 5000)
@@ -112,6 +117,7 @@ Examples
   sudo ./shelf.sh                       guided setup
   sudo ./shelf.sh --yes                 defaults, no questions
   sudo ./shelf.sh --with-stremio --dir /srv/media --name Media --write
+  ./shelf.sh --stremio-first --stremio-key \$STREMIO_AUTH_KEY
   ./shelf.sh --status
 EOF
 }
@@ -126,6 +132,9 @@ while [ $# -gt 0 ]; do
     --restart)      ACTION="restart" ;;
     --status)       ACTION="status" ;;
     --logs)         ACTION="logs" ;;
+    --stremio-first) ACTION="stremio-first" ;;
+    --stremio-key)  STREMIO_KEY="${2:?--stremio-key needs a value}"; shift ;;
+    --stremio-id)   STREMIO_ID="${2:?--stremio-id needs a value}"; shift ;;
     --uninstall)    ACTION="uninstall" ;;
     -h|--help)      usage; exit 0 ;;
     -v|--version)   printf '%s %s\n' "$APP" "$VERSION"; exit 0 ;;
@@ -668,6 +677,7 @@ do_setup() {
 
   if [ "$WITH_STREMIO" = "yes" ]; then
     install_addon
+    [ -n "$STREMIO_KEY" ] && do_stremio_first
   fi
 
   [ "$DO_FIREWALL" = "yes" ] && configure_firewall || note "firewall skipped"
@@ -716,6 +726,18 @@ do_uninstall() {
   note "kept: $REPO_DIR, $DOWNLOAD_DIR and the aria2 configuration"
 }
 
+do_stremio_first() {
+  [ -n "$STREMIO_KEY" ] || die "pass --stremio-key or set STREMIO_AUTH_KEY"
+  [ -f "$REPO_DIR/tools/stremio-priority.py" ] || die "tools/stremio-priority.py is missing"
+  log "moving $STREMIO_ID to the top of the Stremio addon list"
+  export STREMIO_AUTH_KEY="$STREMIO_KEY"
+  if [ "$DRY_RUN" = "yes" ]; then
+    run python3 "$REPO_DIR/tools/stremio-priority.py" --id "$STREMIO_ID" --dry-run
+  else
+    run python3 "$REPO_DIR/tools/stremio-priority.py" --id "$STREMIO_ID"
+  fi
+}
+
 case "$ACTION" in
   setup)     do_setup ;;
   start)     start_services; do_status ;;
@@ -723,5 +745,6 @@ case "$ACTION" in
   restart)   stop_services; start_services; do_status ;;
   status)    do_status ;;
   logs)      if [ "$FOLLOW" = "yes" ]; then journalctl -u "$APP" -f; else journalctl -u "$APP" -n 60 --no-pager; fi ;;
+  stremio-first) do_stremio_first ;;
   uninstall) do_uninstall ;;
 esac
