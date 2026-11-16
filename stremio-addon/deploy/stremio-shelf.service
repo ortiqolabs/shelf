@@ -9,6 +9,7 @@ Type=simple
 User=arnav
 Group=arnav
 WorkingDirectory=/home/arnav/stremio-shelf
+EnvironmentFile=-/home/arnav/.config/shelf/tmdb.env
 Environment=SHELF_ROOT=/media/Movies_and_Shows
 Environment=SHELF_IDLE_SECONDS=1800
 Environment=PYTHONUNBUFFERED=1

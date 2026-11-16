@@ -37,6 +37,7 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = os.path.realpath(os.environ.get("SHELF_ROOT", "/media/Movies_and_Shows"))
 CACHE = os.path.expanduser("~/.cache/shelf-posters")
 MATCH = os.path.join(CACHE, "matches.json")
+MISS_TTL = 24 * 3600
 CINEMETA = "https://v3-cinemeta.strem.io"
 # release titles that do not equal their IMDb name; left side is what the file says
 ALIASES = {"satluj": "Punjab '95"}
@@ -213,7 +214,8 @@ async def get_json(url: str, params: dict | None = None, tries: int = 4) -> dict
     return {}
 
 
-TMDB_ENV = "/home/arnav/tmdb-addon/.env"
+TMDB_ENV = os.path.expanduser("~/.config/shelf/tmdb.env")
+TMDB_ENV_LEGACY = "/home/arnav/tmdb-addon/.env"
 TMDB_IMG = "https://image.tmdb.org/t/p"
 
 
@@ -221,13 +223,16 @@ def tmdb_key() -> str:
     key = os.environ.get("TMDB_API", "").strip()
     if key:
         return key
-    try:
-        with open(TMDB_ENV) as fh:
-            for line in fh:
-                if line.startswith("TMDB_API="):
-                    return line.split("=", 1)[1].strip()
-    except OSError:
-        pass
+    for path in (TMDB_ENV, TMDB_ENV_LEGACY):
+        try:
+            with open(path) as fh:
+                for line in fh:
+                    if line.startswith("TMDB_API="):
+                        value = line.split("=", 1)[1].strip()
+                        if value:
+                            return value
+        except OSError:
+            continue
     return ""
 
 
@@ -302,10 +307,13 @@ async def find_cover(kind: str, title: str, year: str | None) -> dict:
     key = f"{kind}|{title}|{year or ''}"
     hit = cache.get(key)
     if isinstance(hit, str):
-        hit = {"poster": hit, "id": ""}
+        hit = {"poster": hit, "id": "", "tmdb": 0, "at": 0}
         cache[key] = hit
     if isinstance(hit, dict):
-        return hit
+        empty = not hit.get("poster") and not hit.get("id") and not hit.get("tmdb")
+        stale = empty and time.time() - float(hit.get("at") or 0) > MISS_TTL
+        if not stale:
+            return hit
 
     url = f"{CINEMETA}/catalog/{kind}/top/search={urllib.parse.quote(title)}.json"
     found = {"poster": "", "id": "", "tmdb": 0}
@@ -338,6 +346,7 @@ async def find_cover(kind: str, title: str, year: str | None) -> dict:
             found["tmdb"] = tmdb_id
             found["poster"] = extra.get("poster") or found["poster"]
 
+    found["at"] = time.time()
     cache[key] = found
     _save_matches()
     return found
