@@ -271,10 +271,10 @@ def _file_key(path: Path, names: tuple[str, ...]) -> str:
 
 def tmdb_key() -> str:
     """TMDB key from the environment, else from the config file."""
-    key = os.environ.get("TMDB_API_KEY", "").strip()
+    key = (os.environ.get("TMDB_API_KEY") or os.environ.get("TMDB_API") or "").strip()
     if key:
         return key
-    return _file_key(TMDB_ENV, ("TMDB_API_KEY", "TMDB_KEY", "API_KEY"))
+    return _file_key(TMDB_ENV, ("TMDB_API_KEY", "TMDB_API", "TMDB_KEY", "API_KEY"))
 
 
 def omdb_key() -> str:

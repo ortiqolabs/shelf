@@ -40,6 +40,7 @@ costs nothing between visits.
 | **Retry failed transfers** | One button re-adds the original link on either engine |
 | **Free-space guard** | Remaining disk shown quietly, amber when it runs low |
 | **Installable** | Web manifest and icons, so it adds to a phone home screen |
+| **Theater** | Poster rails, Stremio-style details with synopsis, cast, trailer and TMDB/IMDb/RT ratings |
 | **Costs nothing idle** | systemd socket activation; the process exits after 15 idle minutes |
 | **Optional Samba** | A read-only share of the download folder, firewall opened when needed |
 | **Optional addon** | The same library as a Stremio catalogue on port 7020 |
