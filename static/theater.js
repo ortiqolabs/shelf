@@ -49,14 +49,24 @@
     hero: $("hero"),
     heroArt: $("hero-art"),
     heroTitle: $("hero-title"),
-    heroMeta: $("hero-meta"),
+    heroFacts: $("hero-facts"),
+    heroGenres: $("hero-genres"),
+    heroOverview: $("hero-overview"),
+    heroRatings: $("hero-ratings"),
     heroPlay: $("hero-play"),
+    heroTrailer: $("hero-trailer"),
     heroDetail: $("hero-detail"),
     detailLayer: $("detail-layer"),
     detail: $("detail"),
     detailArt: $("detail-art"),
     detailTitle: $("detail-title"),
     detailMeta: $("detail-meta"),
+    detailRatings: $("detail-ratings"),
+    detailGenres: $("detail-genres"),
+    detailPoster: $("detail-poster"),
+    detailOverview: $("detail-overview"),
+    detailPeople: $("detail-people"),
+    detailTrailer: $("detail-trailer"),
     detailFacts: $("detail-facts"),
     detailTracks: $("detail-tracks"),
     detailAudio: $("detail-audio"),
@@ -113,9 +123,9 @@
     const total = Math.floor(Number(seconds) || 0);
     if (!total) return "";
     const h = Math.floor(total / 3600);
-    const m = Math.round((total % 3600) / 60);
-    if (!h) return `${m} min`;
-    return m ? `${h} h ${m} min` : `${h} h`;
+    const m = Math.floor((total % 3600) / 60);
+    if (!h) return `${m}m`;
+    return `${h}h ${String(m).padStart(2, "0")}m`;
   }
 
   function bytes(n) {
@@ -136,13 +146,87 @@
     return item.kind === "series" ? "Series" : "Movie";
   }
 
+  function text(value) {
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  }
+
+  function strings(value) {
+    return Array.isArray(value)
+      ? value.filter((entry) => typeof entry === "string" && entry.trim()).map((entry) => entry.trim())
+      : [];
+  }
+
+  function rating(value) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : null;
+  }
+
   function metaLine(item) {
     const parts = [];
     if (item.year) parts.push(String(item.year));
-    parts.push(kindWord(item));
     const length = runtime(item.duration);
     if (length) parts.push(length);
+    if (item.certification) parts.push(item.certification);
     return parts.join(" · ");
+  }
+
+  function ratingEntries(item) {
+    const entries = [];
+    if (item.tmdbRating) entries.push(["TMDB", item.tmdbRating.toFixed(1)]);
+    if (item.imdbRating) entries.push(["IMDb", item.imdbRating.toFixed(1)]);
+    if (item.rtRating) entries.push(["RT", item.rtRating]);
+    return entries;
+  }
+
+  function badgeRating(item) {
+    const value = item.imdbRating || item.tmdbRating;
+    return value ? value.toFixed(1) : "";
+  }
+
+  function renderRatings(node, item) {
+    const entries = ratingEntries(item);
+    node.replaceChildren(...entries.map(([label, value]) => {
+      const entry = document.createElement("span");
+      entry.className = "rating";
+      const name = document.createElement("span");
+      name.className = "rating-label";
+      name.textContent = label;
+      const score = document.createElement("span");
+      score.className = "rating-value";
+      score.textContent = value;
+      entry.append(name, score);
+      return entry;
+    }));
+    node.hidden = entries.length === 0;
+  }
+
+  function renderGenres(node, item) {
+    node.replaceChildren(...item.genres.map((genre) => {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.textContent = genre;
+      return chip;
+    }));
+    node.hidden = item.genres.length === 0;
+  }
+
+  function renderTrailer(node, id) {
+    if (!id) {
+      node.removeAttribute("href");
+      node.hidden = true;
+      return;
+    }
+    node.href = `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
+    node.hidden = false;
+  }
+
+  function renderPeople(item) {
+    const rows = [
+      fact("Director", item.director.join(", ")),
+      fact("Cast", item.cast.join(", ")),
+    ].filter(Boolean);
+    els.detailPeople.replaceChildren(...rows);
+    els.detailPeople.hidden = rows.length === 0;
   }
 
   function trackName(track, index) {
@@ -186,6 +270,15 @@
       subtitleTracks: Number.isFinite(subtitleTracks) && subtitleTracks > 0 ? Math.floor(subtitleTracks) : 0,
       poster: typeof value.poster === "string" && value.poster ? value.poster : null,
       backdrop: typeof value.backdrop === "string" && value.backdrop ? value.backdrop : null,
+      description: text(value.description),
+      genres: strings(value.genres),
+      tmdbRating: rating(value.tmdbRating),
+      imdbRating: rating(value.imdbRating),
+      rtRating: text(value.rtRating),
+      certification: text(value.certification),
+      director: strings(value.director),
+      cast: strings(value.cast),
+      trailer: text(value.trailer),
       playableDirect: value.playableDirect === true,
     };
   }
@@ -318,7 +411,12 @@
     els.hero.hidden = false;
     art(els.heroArt, item.backdrop, backdropFallback(item));
     els.heroTitle.textContent = item.title;
-    els.heroMeta.textContent = metaLine(item);
+    els.heroFacts.textContent = metaLine(item);
+    renderGenres(els.heroGenres, item);
+    els.heroOverview.textContent = item.description || "";
+    els.heroOverview.hidden = !item.description;
+    renderRatings(els.heroRatings, item);
+    renderTrailer(els.heroTrailer, item.trailer);
     els.heroPlay.onclick = () => playItem(item, { audio: 0, subtitle: null });
     els.heroDetail.onclick = () => openDetail(item);
   }
@@ -348,6 +446,14 @@
     img.decoding = "async";
     art(img, item.poster, posterFallback(item));
     poster.appendChild(img);
+
+    const badge = badgeRating(item);
+    if (badge) {
+      const score = document.createElement("span");
+      score.className = "card-rating";
+      score.textContent = badge;
+      poster.appendChild(score);
+    }
 
     const title = document.createElement("span");
     title.className = "card-title";
@@ -462,18 +568,20 @@
       && els.detailSubs.parentElement.hidden;
   }
 
-  async function openDetail(item) {
-    state.detailItem = item;
-    state.detail = null;
-    state.detailFocus = document.activeElement;
+  function renderDetailInfo(item) {
+    els.detailTitle.textContent = item.title;
+    els.detailMeta.textContent = metaLine(item);
+    renderRatings(els.detailRatings, item);
+    renderGenres(els.detailGenres, item);
+    els.detailOverview.textContent = item.description || "";
+    els.detailOverview.hidden = !item.description;
+    renderPeople(item);
+    renderTrailer(els.detailTrailer, item.trailer);
+    art(els.detailArt, item.backdrop, backdropFallback(item));
+    art(els.detailPoster, item.poster, posterFallback(item));
+  }
 
-    const cached = detailCache.get(item.id);
-    const base = cached ? cached.item : item;
-
-    art(els.detailArt, base.backdrop, backdropFallback(base));
-    els.detailTitle.textContent = base.title;
-    els.detailMeta.textContent = metaLine(base);
-
+  function renderDetailFacts(base) {
     const facts = [
       fact("Year", base.year ? String(base.year) : ""),
       fact("Runtime", runtime(base.duration)),
@@ -484,6 +592,19 @@
       fact("Subtitles", base.subtitleTracks ? `${base.subtitleTracks} track${base.subtitleTracks === 1 ? "" : "s"}` : ""),
     ].filter(Boolean);
     els.detailFacts.replaceChildren(...facts);
+    els.detailFacts.hidden = facts.length === 0;
+  }
+
+  async function openDetail(item) {
+    state.detailItem = item;
+    state.detail = null;
+    state.detailFocus = document.activeElement;
+
+    const cached = detailCache.get(item.id);
+    const base = cached ? cached.item : item;
+
+    renderDetailInfo(base);
+    renderDetailFacts(base);
 
     els.detailNote.hidden = true;
     els.detailLayer.hidden = false;
@@ -512,9 +633,8 @@
       const detail = await fetchDetail(item);
       if (state.detailItem !== item || els.detailLayer.hidden) return;
       state.detail = detail;
-      els.detailTitle.textContent = detail.item.title;
-      els.detailMeta.textContent = metaLine(detail.item);
-      art(els.detailArt, detail.item.backdrop, backdropFallback(detail.item));
+      renderDetailInfo(detail.item);
+      renderDetailFacts(detail.item);
       renderDetailTracks(detail.tracks);
     } catch (error) {
       if (state.detailItem !== item || els.detailLayer.hidden) return;
