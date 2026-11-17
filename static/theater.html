@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Theater · Shelf</title>
+<meta name="theme-color" content="#0b0b0c" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<link rel="manifest" href="/manifest.webmanifest?v=1" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/icon-192.png?v=1" />
+<link rel="preload" href="/fonts/google-sans-text-400.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="preload" href="/img/bg.webp" as="image" type="image/webp" />
+<link rel="stylesheet" href="/app.css?v=17" />
+<link rel="stylesheet" href="/theater.css?v=1" />
+</head>
+<body class="theater">
+<div class="sky" aria-hidden="true">
+  <i class="star s1"></i>
+  <i class="star s2"></i>
+  <i class="star s3"></i>
+  <i class="star s4"></i>
+  <i class="star s5"></i>
+  <i class="star s6"></i>
+  <i class="star s7"></i>
+  <i class="star s8"></i>
+  <i class="star s9"></i>
+  <i class="star s10"></i>
+  <i class="star s11"></i>
+  <i class="star s12"></i>
+  <i class="star s16"></i>
+  <i class="star s15"></i>
+  <i class="star s14"></i>
+  <i class="star s13"></i>
+</div>
+
+<div class="shell">
+  <aside class="rail" aria-label="Shelf">
+    <a class="rail-brand" href="/" aria-label="Shelf home">
+      <svg class="mark" viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M3 4.5h14M3 10h14M3 15.5h9" />
+      </svg>
+      <span class="wordmark">Shelf</span>
+    </a>
+
+    <nav class="rail-nav" aria-label="Main">
+      <a class="rail-link" href="/">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 4v11m0 0 4-4m-4 4-4-4M5 20h14" />
+        </svg>
+        <span>Downloads</span>
+      </a>
+      <a class="rail-link" href="/theater.html" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="4.5" width="18" height="12" rx="2.5" />
+          <path d="M10 8.5 14.2 10.5 10 12.5zM8 20h8" />
+        </svg>
+        <span>Theater</span>
+      </a>
+    </nav>
+
+    <p class="rail-foot"><span id="rail-count">Local library</span></p>
+  </aside>
+
+  <main class="stage" id="stage">
+    <header class="stage-head">
+      <h1 class="stage-title">Theater</h1>
+      <label class="filter">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="10.8" cy="10.8" r="6.3" />
+          <path d="m15.5 15.5 4 4" />
+        </svg>
+        <span class="sr-only">Filter titles</span>
+        <input id="filter" type="search" placeholder="Filter titles" autocomplete="off"
+               autocapitalize="off" spellcheck="false" enterkeyhint="search" />
+      </label>
+    </header>
+
+    <div class="loading" id="loading" aria-hidden="true">
+      <div class="skel-hero"></div>
+      <div class="skel-rail">
+        <div class="skel-card"></div>
+        <div class="skel-card"></div>
+        <div class="skel-card"></div>
+        <div class="skel-card"></div>
+        <div class="skel-card"></div>
+        <div class="skel-card"></div>
+      </div>
+    </div>
+
+    <div id="content" hidden>
+      <section class="hero" id="hero" aria-labelledby="hero-title" hidden>
+        <img class="hero-art" id="hero-art" src="/img/bg.webp" alt="" />
+        <div class="hero-scrim" aria-hidden="true"></div>
+        <div class="hero-body">
+          <h2 class="hero-title" id="hero-title"></h2>
+          <p class="hero-meta" id="hero-meta"></p>
+          <div class="hero-actions">
+            <button class="primary hero-play" id="hero-play" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5 18 12 8 18.5z" /></svg>
+              <span>Play</span>
+            </button>
+            <button class="ghost hero-detail" id="hero-detail" type="button">Details</button>
+          </div>
+        </div>
+      </section>
+
+      <div id="rails"></div>
+
+      <div class="empty-state" id="empty" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="4.5" width="18" height="12" rx="2.5" />
+          <path d="M10 8.5 14.2 10.5 10 12.5zM8 20h8" />
+        </svg>
+        <p>Nothing to watch yet</p>
+        <span>Finished downloads appear here. Add a link on Downloads.</span>
+        <a class="ghost" href="/">Go to Downloads</a>
+      </div>
+
+      <p class="no-match" id="no-match" hidden></p>
+    </div>
+
+    <div class="fatal" id="fatal" hidden role="alert">
+      <p>Could not read the library</p>
+      <span id="fatal-reason">The server did not answer.</span>
+      <button class="ghost" id="retry" type="button">Try again</button>
+    </div>
+  </main>
+</div>
+
+<div class="detail-layer" id="detail-layer" hidden>
+  <article class="detail" id="detail" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
+    <div class="detail-art">
+      <img id="detail-art" src="/img/bg.webp" alt="" />
+      <div class="detail-scrim" aria-hidden="true"></div>
+      <button class="detail-back" id="detail-back" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6" /></svg>
+        <span>Back</span>
+      </button>
+      <div class="detail-head">
+        <h2 class="detail-title" id="detail-title"></h2>
+        <p class="detail-meta" id="detail-meta"></p>
+        <div class="detail-actions">
+          <button class="primary" id="detail-play" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5 18 12 8 18.5z" /></svg>
+            <span>Play</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="detail-body">
+      <dl class="facts" id="detail-facts"></dl>
+      <div class="detail-tracks" id="detail-tracks" hidden>
+        <label class="field-mini">
+          <span>Audio</span>
+          <select id="detail-audio" aria-label="Audio track"></select>
+        </label>
+        <label class="field-mini">
+          <span>Subtitles</span>
+          <select id="detail-subs" aria-label="Subtitles"></select>
+        </label>
+      </div>
+      <p class="detail-note" id="detail-note" hidden></p>
+    </div>
+  </article>
+</div>
+
+<div class="player" id="player" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-label="Player" tabindex="-1">
+  <video id="video" playsinline preload="metadata"></video>
+
+  <div class="player-top" id="player-top">
+    <div class="player-heading">
+      <p class="player-title" id="player-title"></p>
+      <p class="player-sub mono" id="player-sub"></p>
+    </div>
+    <button class="p-btn" id="close-player" type="button" aria-label="Close player" title="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11" /></svg>
+    </button>
+  </div>
+
+  <div class="player-buffer" id="buffering" hidden>
+    <span class="ring" aria-hidden="true"></span>
+    <p>Buffering</p>
+  </div>
+
+  <div class="player-error" id="player-error" hidden role="alert">
+    <div class="player-error-box">
+      <p class="player-error-title">This file will not play here</p>
+      <p class="player-error-reason" id="player-error-reason"></p>
+      <a class="ghost" id="player-fallback" href="#" target="_blank" rel="noopener">Open direct stream</a>
+    </div>
+  </div>
+
+  <div class="player-controls" id="player-controls">
+    <div class="timeline" id="timeline" role="slider" tabindex="0" aria-label="Seek"
+         aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00">
+      <div class="timeline-track" aria-hidden="true"></div>
+      <div class="timeline-buffer" id="timeline-buffer" aria-hidden="true"></div>
+      <div class="timeline-fill" id="timeline-fill" aria-hidden="true"></div>
+      <div class="timeline-thumb" id="timeline-thumb" aria-hidden="true"></div>
+    </div>
+
+    <div class="controls-row">
+      <div class="controls-group">
+        <button class="p-btn" id="play-toggle" type="button" aria-label="Play" title="Play">
+          <svg viewBox="0 0 24 24" aria-hidden="true" id="play-icon"><path d="M8 5.5 18 12 8 18.5z" /></svg>
+        </button>
+        <button class="p-btn" id="back10" type="button" aria-label="Back 10 seconds" title="Back 10 seconds">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 9.5A7.5 7.5 0 1 1 5 14M5.5 4.5v5h5" /><text x="12" y="16" text-anchor="middle" class="p-num">10</text></svg>
+        </button>
+        <button class="p-btn" id="fwd10" type="button" aria-label="Forward 10 seconds" title="Forward 10 seconds">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.5 9.5A7.5 7.5 0 1 0 19 14M18.5 4.5v5h-5" /><text x="12" y="16" text-anchor="middle" class="p-num">10</text></svg>
+        </button>
+        <span class="time mono"><span id="cur">0:00</span><span class="time-sep">/</span><span id="dur">0:00</span></span>
+      </div>
+
+      <div class="controls-group volume">
+        <button class="p-btn" id="mute" type="button" aria-label="Mute" title="Mute">
+          <svg viewBox="0 0 24 24" aria-hidden="true" id="mute-icon"><path d="M4 9.8h3.6L12 6v12l-4.4-3.8H4zM16 9.5a4 4 0 0 1 0 5M18.5 7a7.5 7.5 0 0 1 0 10" /></svg>
+        </button>
+        <input class="volume-slider" id="volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume" />
+      </div>
+
+      <div class="controls-group menus">
+        <label class="mini">
+          <span>Speed</span>
+          <select id="speed" aria-label="Playback speed">
+            <option value="0.75">0.75×</option>
+            <option value="1" selected>1×</option>
+            <option value="1.25">1.25×</option>
+            <option value="1.5">1.5×</option>
+            <option value="2">2×</option>
+          </select>
+        </label>
+        <label class="mini" id="audio-wrap" hidden>
+          <span>Audio</span>
+          <select id="audio" aria-label="Audio track"></select>
+        </label>
+        <label class="mini" id="subs-wrap" hidden>
+          <span>Subtitles</span>
+          <select id="subs" aria-label="Subtitles"></select>
+        </label>
+        <label class="mini">
+          <span>Aspect</span>
+          <select id="aspect" aria-label="Aspect ratio">
+            <option value="fit" selected>Fit</option>
+            <option value="fill">Fill</option>
+            <option value="16:9">16:9</option>
+            <option value="4:3">4:3</option>
+            <option value="stretch">Stretch</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="controls-group end">
+        <button class="p-btn" id="pip" type="button" aria-label="Picture in picture" title="Picture in picture">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2" /><rect x="12" y="11.5" width="7" height="6" rx="1" /></svg>
+        </button>
+        <button class="p-btn" id="fullscreen" type="button" aria-label="Fullscreen" title="Fullscreen" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5" /></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <p class="shortcuts" id="shortcuts" hidden>
+    Space play · ← → seek · ↑ ↓ volume · M mute · F fullscreen · Esc close
+  </p>
+</div>
+
+<script src="/vendor/hls.min.js"></script>
+<script src="/theater.js?v=1"></script>
+</body>
+</html>
