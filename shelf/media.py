@@ -59,7 +59,12 @@ SITE = re.compile(
 
 MATCHES_PATH = Path.home() / ".cache" / "shelf-theater" / "matches.json"
 TMDB_ENV = Path.home() / ".config" / "shelf" / "tmdb.env"
+OMDB_ENV = Path.home() / ".config" / "shelf" / "omdb.env"
 TMDB_IMAGE = "https://image.tmdb.org/t/p"
+CINEMETA = "https://v3-cinemeta.strem.io/meta"
+OMDB_URL = "https://www.omdbapi.com/"
+# bumped when the cache gains fields, so old entries are looked up once more
+CACHE_SCHEMA = 2
 
 HLS_ROOT = Path(os.environ.get("SHELF_HLS_DIR", "/tmp/shelf-hls"))
 SESSION_TTL = 60.0
@@ -249,22 +254,35 @@ def _tracks(data: dict[str, Any], kind: str) -> list[dict[str, Any]]:
 # ------------------------------------------------------------- enrichment
 
 
-def tmdb_key() -> str:
-    """TMDB key from the environment, else from the config file."""
-    key = os.environ.get("TMDB_API_KEY", "").strip()
-    if key:
-        return key
+def _file_key(path: Path, names: tuple[str, ...]) -> str:
+    """First value for one of names in a KEY=value file, empty when absent."""
     try:
-        lines = TMDB_ENV.read_text().splitlines()
+        lines = path.read_text().splitlines()
     except OSError:
         return ""
     for line in lines:
         if line.strip().startswith("#") or "=" not in line:
             continue
         name, value = line.split("=", 1)
-        if name.strip() in ("TMDB_API_KEY", "TMDB_KEY", "API_KEY"):
+        if name.strip() in names:
             return value.strip().strip("\"'")
     return ""
+
+
+def tmdb_key() -> str:
+    """TMDB key from the environment, else from the config file."""
+    key = os.environ.get("TMDB_API_KEY", "").strip()
+    if key:
+        return key
+    return _file_key(TMDB_ENV, ("TMDB_API_KEY", "TMDB_KEY", "API_KEY"))
+
+
+def omdb_key() -> str:
+    """OMDb key from the environment, else from the config file."""
+    key = os.environ.get("SHELF_OMDB_KEY", "").strip()
+    if key:
+        return key
+    return _file_key(OMDB_ENV, ("OMDB_API_KEY",))
 
 
 def _load_matches() -> dict[str, dict[str, Any]]:
@@ -288,7 +306,143 @@ def _save_matches() -> None:
         pass
 
 
+def _empty_metadata() -> dict[str, Any]:
+    """Every optional field at its unknown value."""
+    return {
+        "poster": None,
+        "backdrop": None,
+        "description": None,
+        "tagline": None,
+        "genres": [],
+        "tmdbRating": None,
+        "tmdbVotes": None,
+        "imdbId": None,
+        "imdbRating": None,
+        "rtRating": None,
+        "certification": None,
+        "director": [],
+        "cast": [],
+        "trailer": None,
+    }
+
+
+def _cached(entry: dict[str, Any]) -> dict[str, Any]:
+    """Cached fields with the unknown values filled in."""
+    meta = _empty_metadata()
+    for name in meta:
+        if name in entry:
+            meta[name] = entry[name]
+    return meta
+
+
+def _names(values: Any) -> list[str]:
+    return [str(value["name"]) for value in values or [] if value.get("name")]
+
+
+def _number(value: Any, kind: type[float] | type[int]) -> float | int | None:
+    try:
+        return kind(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _certification(detail: dict[str, Any], route: str) -> str | None:
+    """US certification, else the first one TMDB has."""
+    block = "release_dates" if route == "movie" else "content_ratings"
+    rows = (detail.get(block) or {}).get("results") or []
+
+    def rating(row: dict[str, Any]) -> str | None:
+        if route != "movie":
+            return row.get("rating") or None
+        for release in row.get("release_dates") or []:
+            if release.get("certification"):
+                return release["certification"]
+        return None
+
+    us = next((row for row in rows if row.get("iso_3166_1") == "US"), None)
+    if us and rating(us):
+        return rating(us)
+    for row in rows:
+        value = rating(row)
+        if value:
+            return value
+    return None
+
+
+def _trailer(detail: dict[str, Any]) -> str | None:
+    """YouTube id of an official English trailer, else any trailer."""
+    clips = [
+        clip
+        for clip in (detail.get("videos") or {}).get("results") or []
+        if clip.get("site") == "YouTube" and clip.get("type") == "Trailer" and clip.get("key")
+    ]
+    for clip in clips:
+        if clip.get("official") and clip.get("iso_639_1") == "en":
+            return clip["key"]
+    return clips[0]["key"] if clips else None
+
+
+def _apply_detail(meta: dict[str, Any], detail: dict[str, Any], route: str) -> None:
+    """Copy the fields the detail view shows out of a TMDB detail response."""
+    meta["description"] = detail.get("overview") or None
+    meta["tagline"] = detail.get("tagline") or None
+    meta["genres"] = _names(detail.get("genres"))
+    meta["tmdbRating"] = _number(detail.get("vote_average"), float)
+    meta["tmdbVotes"] = _number(detail.get("vote_count"), int)
+    meta["imdbId"] = (detail.get("external_ids") or {}).get("imdb_id") or None
+    meta["certification"] = _certification(detail, route)
+    credits = detail.get("credits") or {}
+    meta["director"] = [
+        person["name"]
+        for person in credits.get("crew") or []
+        if person.get("job") == "Director" and person.get("name")
+    ][:3]
+    meta["cast"] = [person["name"] for person in credits.get("cast") or [] if person.get("name")][:6]
+    meta["trailer"] = _trailer(detail)
+
+
+async def _detail(client: httpx.AsyncClient, route: str, tmdb_id: Any, key: str) -> dict[str, Any]:
+    """One TMDB detail call with the extra blocks the view needs."""
+    extra = "credits,release_dates,videos,external_ids"
+    if route != "movie":
+        extra = "credits,content_ratings,videos,external_ids"
+    response = await client.get(
+        f"https://api.themoviedb.org/3/{route}/{tmdb_id}",
+        params={"api_key": key, "append_to_response": extra},
+    )
+    response.raise_for_status()
+    return response.json() or {}
+
+
+async def _imdb_rating(client: httpx.AsyncClient, imdb_id: str, kind: str) -> float | None:
+    """IMDb rating from Cinemeta; a failure is not worth a retry."""
+    route = "movie" if kind == "movie" else "series"
+    try:
+        response = await client.get(f"{CINEMETA}/{route}/{imdb_id}.json")
+        response.raise_for_status()
+        return _number(((response.json() or {}).get("meta") or {}).get("imdbRating"), float)
+    except Exception:
+        return None
+
+
+async def _rt_rating(client: httpx.AsyncClient, imdb_id: str) -> str | None:
+    """Rotten Tomatoes score from OMDb, only when an OMDb key is configured."""
+    key = omdb_key()
+    if not key or not imdb_id:
+        return None
+    try:
+        response = await client.get(OMDB_URL, params={"i": imdb_id, "apikey": key})
+        response.raise_for_status()
+        for rating in (response.json() or {}).get("Ratings") or []:
+            if rating.get("Source") == "Rotten Tomatoes":
+                return rating.get("Value") or None
+    except Exception:
+        return None
+    return None
+
+
 async def _lookup(title: str, year: int | None, kind: str) -> dict[str, Any]:
+    """Search TMDB once, then enrich from the matched id."""
     key = tmdb_key()
     route = "movie" if kind == "movie" else "tv"
     params = {"api_key": key, "query": title}
@@ -298,32 +452,48 @@ async def _lookup(title: str, year: int | None, kind: str) -> dict[str, Any]:
         response = await client.get(f"https://api.themoviedb.org/3/search/{route}", params=params)
         response.raise_for_status()
         results = (response.json() or {}).get("results") or []
-    if not results:
-        return {"poster": None, "backdrop": None}
-    first = results[0]
-    poster, backdrop = first.get("poster_path"), first.get("backdrop_path")
-    return {
-        "poster": f"{TMDB_IMAGE}/w342{poster}" if poster else None,
-        "backdrop": f"{TMDB_IMAGE}/w780{backdrop}" if backdrop else None,
-    }
+        meta = _empty_metadata()
+        meta["schema"] = CACHE_SCHEMA
+        if not results:
+            return meta
+        first = results[0] or {}
+        poster, backdrop = first.get("poster_path"), first.get("backdrop_path")
+        meta["poster"] = f"{TMDB_IMAGE}/w342{poster}" if poster else None
+        meta["backdrop"] = f"{TMDB_IMAGE}/w780{backdrop}" if backdrop else None
+        if not first.get("id"):
+            return meta
+        try:
+            detail = await _detail(client, route, first["id"], key)
+        except Exception:  # art alone is better than no item
+            return meta
+        _apply_detail(meta, detail, route)
+        imdb_id = meta["imdbId"]
+        if imdb_id:
+            meta["imdbRating"], meta["rtRating"] = await asyncio.gather(
+                _imdb_rating(client, imdb_id, kind), _rt_rating(client, imdb_id)
+            )
+    return meta
 
 
 async def art_for(rel: str, title: str, year: int | None, kind: str) -> dict[str, Any]:
-    """Poster and backdrop once per file; a broken network gives nulls."""
+    """Poster, art and detail metadata once per file; a broken network gives nulls."""
     cache = _load_matches()
     known = cache.get(rel)
     if isinstance(known, dict):
-        return {"poster": known.get("poster"), "backdrop": known.get("backdrop")}
+        if known.get("schema") == CACHE_SCHEMA:
+            return _cached(known)
+        if not tmdb_key() or _offline["until"] > time.time():
+            return _cached(known)
     if not tmdb_key() or _offline["until"] > time.time():
-        return {"poster": None, "backdrop": None}
+        return _empty_metadata()
     try:
         found = await _lookup(title, year, kind)
     except Exception:  # the library must render even when TMDB is unreachable
         _offline["until"] = time.time() + 60
-        return {"poster": None, "backdrop": None}
+        return _empty_metadata()
     cache[rel] = found
     _save_matches()
-    return {"poster": found.get("poster"), "backdrop": found.get("backdrop")}
+    return _cached(found)
 
 
 # ------------------------------------------------------------------ items
@@ -349,6 +519,18 @@ async def _library_item(path: Path, root: Path, st: os.stat_result, data: dict[s
         "subtitleTracks": len(_tracks(data, "subtitle")),
         "poster": art.get("poster"),
         "backdrop": art.get("backdrop"),
+        "description": art.get("description"),
+        "tagline": art.get("tagline"),
+        "genres": art.get("genres") or [],
+        "tmdbRating": art.get("tmdbRating"),
+        "tmdbVotes": art.get("tmdbVotes"),
+        "imdbId": art.get("imdbId"),
+        "imdbRating": art.get("imdbRating"),
+        "rtRating": art.get("rtRating"),
+        "certification": art.get("certification"),
+        "director": art.get("director") or [],
+        "cast": art.get("cast") or [],
+        "trailer": art.get("trailer"),
         "playableDirect": info["container"] in PLAYABLE_CONTAINERS and codec in PLAYABLE_CODECS,
     }
 

@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import sys
@@ -17,9 +18,11 @@ def isolated(tmp_path, monkeypatch):
     """Point every path media.py writes to at the test's own tmp folder."""
     monkeypatch.setattr(media, "MATCHES_PATH", tmp_path / "matches.json")
     monkeypatch.setattr(media, "TMDB_ENV", tmp_path / "no-tmdb.env")
+    monkeypatch.setattr(media, "OMDB_ENV", tmp_path / "no-omdb.env")
     monkeypatch.setattr(media, "HLS_ROOT", tmp_path / "hls")
     monkeypatch.setattr(media, "download_dir", lambda: tmp_path / "download")
     monkeypatch.delenv("TMDB_API_KEY", raising=False)
+    monkeypatch.delenv("SHELF_OMDB_KEY", raising=False)
     media._probe_cache.clear()
     media._matches = None
     media._offline["until"] = 0.0
@@ -48,6 +51,99 @@ def fake_probe(streams=None, duration="120.500000"):
         return {"streams": streams or [], "format": {"duration": duration}}
 
     return probe
+
+
+TMDB_SEARCH = {
+    "results": [{"id": 603, "poster_path": "/poster.jpg", "backdrop_path": "/back.jpg"}]
+}
+TMDB_DETAIL = {
+    "overview": "A hacker learns the truth about his world.",
+    "tagline": "Welcome to the real world.",
+    "genres": [{"name": "Action"}, {"name": "Science Fiction"}],
+    "vote_average": 8.2,
+    "vote_count": 24000,
+    "external_ids": {"imdb_id": "tt0133093"},
+    "release_dates": {
+        "results": [
+            {"iso_3166_1": "GB", "release_dates": [{"certification": "15"}]},
+            {"iso_3166_1": "US", "release_dates": [{"certification": "R"}]},
+        ]
+    },
+    "credits": {
+        "crew": [
+            {"job": "Director", "name": "Director 0"},
+            {"job": "Director", "name": "Director 1"},
+            {"job": "Director", "name": "Director 2"},
+            {"job": "Director", "name": "Director 3"},
+            {"job": "Producer", "name": "Not A Director"},
+        ],
+        "cast": [{"name": f"Actor {number}"} for number in range(8)],
+    },
+    "videos": {
+        "results": [
+            {"site": "YouTube", "type": "Trailer", "key": "french", "iso_639_1": "fr"},
+            {
+                "site": "YouTube",
+                "type": "Trailer",
+                "key": "official-en",
+                "official": True,
+                "iso_639_1": "en",
+            },
+            {"site": "YouTube", "type": "Teaser", "key": "teaser", "iso_639_1": "en"},
+        ]
+    },
+}
+OMDB_RATINGS = {
+    "Ratings": [
+        {"Source": "Internet Movie Database", "Value": "8.7/10"},
+        {"Source": "Rotten Tomatoes", "Value": "88%"},
+    ]
+}
+
+
+class FakeResponse:
+    def __init__(self, payload=None, status=200):
+        self.payload = {} if payload is None else payload
+        self.status_code = status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def json(self):
+        return self.payload
+
+
+class FakeClient:
+    def __init__(self, handler):
+        self.handler = handler
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, url, params=None):
+        return self.handler(url, params or {})
+
+
+def fake_network(monkeypatch, tmdb_status=200, cinemeta_status=200):
+    """Route the four real requests at canned JSON and record every call."""
+    calls = []
+
+    def handler(url, params):
+        calls.append((url, params))
+        if "/search/" in url:
+            return FakeResponse(TMDB_SEARCH, tmdb_status)
+        if "v3-cinemeta" in url:
+            return FakeResponse({"meta": {"imdbRating": "8.7"}}, cinemeta_status)
+        if "omdbapi" in url:
+            return FakeResponse(OMDB_RATINGS)
+        return FakeResponse(TMDB_DETAIL, tmdb_status)
+
+    monkeypatch.setattr(media.httpx, "AsyncClient", lambda **kwargs: FakeClient(handler))
+    return calls
 
 
 def write_shim(tmp_path, body):
@@ -179,6 +275,107 @@ def test_media_detail_lists_tracks_and_urls(monkeypatch):
 def test_unknown_id_is_404():
     assert TestClient(web.app).get("/api/media/" + "0" * 16).status_code == 404
     assert TestClient(web.app).get("/api/media/../../etc/passwd").status_code == 404
+
+
+# -------------------------------------------------------------- metadata
+
+
+def test_library_maps_tmdb_imdb_and_rotten_tomatoes(monkeypatch):
+    monkeypatch.setenv("TMDB_API_KEY", "test-key")
+    monkeypatch.setenv("SHELF_OMDB_KEY", "omdb-key")
+    calls = fake_network(monkeypatch)
+    make_file("The.Matrix.1999.1080p.BluRay.mkv")
+
+    item = TestClient(web.app).get("/api/library").json()["items"][0]
+    assert item["description"] == TMDB_DETAIL["overview"]
+    assert item["tagline"] == TMDB_DETAIL["tagline"]
+    assert item["genres"] == ["Action", "Science Fiction"]
+    assert item["tmdbRating"] == 8.2
+    assert item["tmdbVotes"] == 24000
+    assert item["imdbId"] == "tt0133093"
+    assert item["imdbRating"] == 8.7
+    assert item["rtRating"] == "88%"
+    assert item["certification"] == "R"
+    assert item["director"] == ["Director 0", "Director 1", "Director 2"]
+    assert item["cast"] == [f"Actor {number}" for number in range(6)]
+    assert item["trailer"] == "official-en"
+    assert item["poster"].endswith("/w342/poster.jpg")
+    assert item["backdrop"].endswith("/w780/back.jpg")
+
+    assert sum("/search/" in url for url, _ in calls) == 1
+    assert sum("api.themoviedb.org/3/movie/603" in url for url, _ in calls) == 1
+    omdb = [params for url, params in calls if "omdbapi" in url]
+    assert omdb == [{"i": "tt0133093", "apikey": "omdb-key"}]
+
+
+def test_omdb_is_not_called_without_a_key(monkeypatch):
+    monkeypatch.setenv("TMDB_API_KEY", "test-key")
+    calls = fake_network(monkeypatch)
+    make_file("The.Matrix.1999.1080p.mkv")
+
+    item = TestClient(web.app).get("/api/library").json()["items"][0]
+    assert item["imdbId"] == "tt0133093"
+    assert item["rtRating"] is None
+    assert not any("omdbapi" in url for url, _ in calls)
+
+
+@pytest.mark.parametrize("breaker", ["tmdb", "cinemeta"])
+def test_upstream_500_still_returns_the_item(monkeypatch, breaker):
+    monkeypatch.setenv("TMDB_API_KEY", "test-key")
+    fake_network(
+        monkeypatch,
+        tmdb_status=500 if breaker == "tmdb" else 200,
+        cinemeta_status=500 if breaker == "cinemeta" else 200,
+    )
+    _, file_id = make_file("The.Matrix.1999.1080p.mkv")
+
+    item = TestClient(web.app).get("/api/library").json()["items"][0]
+    assert item["id"] == file_id
+    if breaker == "tmdb":
+        assert item["description"] is None
+        assert item["genres"] == []
+        assert item["director"] == []
+        assert item["cast"] == []
+        assert item["trailer"] is None
+        assert item["poster"] is None
+    else:
+        assert item["description"] == TMDB_DETAIL["overview"]
+        assert item["imdbId"] == "tt0133093"
+        assert item["imdbRating"] is None
+
+
+def test_second_scan_reuses_the_cache(monkeypatch):
+    monkeypatch.setenv("TMDB_API_KEY", "test-key")
+    calls = fake_network(monkeypatch)
+    make_file("The.Matrix.1999.1080p.mkv")
+    client = TestClient(web.app)
+
+    first = client.get("/api/library").json()["items"][0]
+    lookups = len(calls)
+    second = client.get("/api/library").json()["items"][0]
+
+    assert lookups > 0
+    assert second == first
+    assert len(calls) == lookups
+
+
+def test_old_cache_entry_is_refetched_once(monkeypatch):
+    monkeypatch.setenv("TMDB_API_KEY", "test-key")
+    media.MATCHES_PATH.write_text(
+        json.dumps({"The.Matrix.1999.1080p.mkv": {"poster": "/old.jpg", "backdrop": None}})
+    )
+    calls = fake_network(monkeypatch)
+    make_file("The.Matrix.1999.1080p.mkv")
+    client = TestClient(web.app)
+
+    first = client.get("/api/library").json()["items"][0]
+    assert first["description"] == TMDB_DETAIL["overview"]
+    assert first["poster"].endswith("/w342/poster.jpg")
+    lookups = len(calls)
+    assert lookups > 0
+
+    assert client.get("/api/library").json()["items"][0] == first
+    assert len(calls) == lookups
 
 
 def test_symlink_escaping_the_download_folder_is_hidden(tmp_path):

@@ -170,6 +170,7 @@ flowchart LR
 | `SHELF_ARIA2_CONF` | `~/.config/aria2/aria2.conf` | aria2 configuration |
 | `SHELF_ARIA2_RPC` | `http://127.0.0.1:6800/jsonrpc` | aria2 RPC endpoint |
 | `SHELF_TOKEN` | unset | auth token for the page; unset or empty turns auth off |
+| `SHELF_OMDB_KEY` | unset | OMDb key for Rotten Tomatoes scores; stored in `~/.config/shelf/omdb.env` as `OMDB_API_KEY=...` |
 
 Secrets live in `.env` beside the repository, which git ignores. `shelf.sh`
 creates it only when missing and never overwrites it.
