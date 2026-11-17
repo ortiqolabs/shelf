@@ -851,6 +851,15 @@
     showPlayerError("This browser cannot play HLS. Open the direct stream instead.");
   }
 
+  function hevcSupported() {
+    const probe = document.createElement("video");
+    return Boolean(
+      probe.canPlayType('video/mp4; codecs="hvc1.1.6.L120.90"') ||
+      probe.canPlayType('video/mp4; codecs="hvc1"') ||
+      probe.canPlayType('video/mp4; codecs="hev1"')
+    );
+  }
+
   async function playItem(item, prefs) {
     if (!item) return;
     const options = prefs || {};
@@ -890,6 +899,13 @@
     els.speed.value = "1";
     els.video.playbackRate = 1;
     syncLock();
+
+    if (["hevc", "h265", "hevc1"].includes(item.videoCodec) && !hevcSupported()) {
+      els.playerTitle.textContent = item.title;
+      els.playerSub.textContent = "H.265 / HEVC";
+      showPlayerError("This browser cannot decode HEVC. Use the direct stream link in a native player such as Stremio, VLC or mpv.");
+      return;
+    }
 
     els.playerTitle.textContent = item.title;
     els.playerSub.textContent = metaLine(item);

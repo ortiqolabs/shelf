@@ -102,6 +102,23 @@ sudo ./shelf.sh --with-stremio --dir /srv/media --name Media --write --no-firewa
 Linux with systemd, Python 3.11+, aria2, and about 150 MB of disk for the venv.
 Tested on Raspberry Pi OS 12 (aarch64) and Arch (x86-64).
 
+## Theater
+
+`/theater` is a second surface over the same files: poster rails from the
+download folder, a detail view, and a browser player with seek, volume, speed,
+audio-track and subtitle switching, aspect ratios, fullscreen and PiP.
+
+- Everything is copy-only. Files the browser can open are served directly with
+  byte ranges; MKV is remuxed to HLS with `ffmpeg -c copy` at 1.2× realtime, no
+  transcode, so the bitrate and resolution are untouched.
+- Seeking an HLS item restarts the copy at the target second and offsets the
+  timeline, which is why it is instant instead of waiting for a full remux.
+- HEVC/H.265 needs a decoder the browser may not have (Chromium on Linux does
+  not). The player detects that and offers the direct stream for Stremio, VLC or
+  mpv instead of buffering forever. H.264 plays in the page, including 4K.
+- Metadata comes from TMDB when a key is configured; otherwise generated SVG
+  posters keep the rails readable.
+
 ## Screenshots
 
 | Queue | Phone |
