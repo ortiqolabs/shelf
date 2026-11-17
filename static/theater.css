@@ -981,7 +981,7 @@ body.locked { overflow: hidden; }
   justify-content: center;
   gap: 12px;
   pointer-events: none;
-  background: rgba(5, 5, 8, 0.28);
+  background: rgba(5, 5, 8, 0.46);
 }
 
 .player-buffer[hidden] { display: none; }
@@ -989,7 +989,7 @@ body.locked { overflow: hidden; }
 .player-buffer p {
   margin: 0;
   font-size: 15px;
-  color: var(--text-2);
+  color: var(--text);
 }
 
 .ring {
