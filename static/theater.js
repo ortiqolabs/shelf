@@ -21,6 +21,12 @@
       hls: null,
       audioIndex: 0,
       subIndex: null,
+      offset: 0,
+      hlsMode: false,
+      seekTarget: null,
+      seekTimer: null,
+      sessionSeq: 0,
+      sessionChain: Promise.resolve(),
       token: 0,
       error: false,
       closing: false,
@@ -535,13 +541,63 @@
 
   /* ---------- player ---------- */
 
+  function playerDuration() {
+    const player = state.player;
+    const itemDuration = player.item && Number.isFinite(player.item.duration) ? player.item.duration : 0;
+    if (player.hlsMode) return itemDuration;
+    const native = els.video.duration;
+    if (Number.isFinite(native) && native > 0) return native;
+    return itemDuration;
+  }
+
+  function clampPosition(value) {
+    const duration = playerDuration();
+    const target = Math.max(0, Number(value) || 0);
+    return duration > 0 ? Math.min(duration, target) : target;
+  }
+
+  function playerPosition() {
+    const player = state.player;
+    if (player.seekTarget !== null) return player.seekTarget;
+    const current = Number.isFinite(els.video.currentTime) ? els.video.currentTime : 0;
+    return Math.max(0, player.offset + current);
+  }
+
   function seekBy(seconds) {
-    const video = els.video;
-    const duration = Number.isFinite(video.duration) ? video.duration : 0;
-    if (!duration) return;
-    video.currentTime = Math.min(duration, Math.max(0, video.currentTime + seconds));
+    const player = state.player;
+    if (!playerDuration()) return;
+    const target = clampPosition(playerPosition() + seconds);
+    if (player.hlsMode) {
+      player.seekTarget = target;
+      commitHlsSeek();
+      return;
+    }
+    els.video.currentTime = target;
     renderProgress();
     poke();
+  }
+
+  function commitHlsSeek() {
+    const player = state.player;
+    window.clearTimeout(player.seekTimer);
+    player.seekTimer = null;
+    if (!player.hlsMode || player.seekTarget === null) return;
+    player.seekTarget = clampPosition(player.seekTarget);
+    els.video.pause();
+    setBuffering(true);
+    renderProgress();
+    renderBuffered();
+    startSession(player.audioIndex, player.seekTarget, true);
+  }
+
+  function scheduleHlsSeek() {
+    const player = state.player;
+    if (!player.hlsMode || player.seekTarget === null) return;
+    window.clearTimeout(player.seekTimer);
+    player.seekTimer = window.setTimeout(() => {
+      player.seekTimer = null;
+      commitHlsSeek();
+    }, 140);
   }
 
   function setIcon(svg, path, filled) {
@@ -652,9 +708,19 @@
     });
   }
 
-  async function startSession(audio, start, autoplay = true) {
+  function startSession(audio, start, autoplay = true) {
     const player = state.player;
-    if (!player.item) return;
+    const seq = player.sessionSeq + 1;
+    player.sessionSeq = seq;
+    player.sessionChain = player.sessionChain
+      .catch(() => {})
+      .then(() => openSession(seq, audio, start, autoplay));
+    return player.sessionChain;
+  }
+
+  async function openSession(seq, audio, start, autoplay) {
+    const player = state.player;
+    if (seq !== player.sessionSeq || player.closing) return;
     const token = player.token;
     clearPlayerError();
     setBuffering(true);
@@ -662,8 +728,9 @@
     const previous = player.session;
     player.session = null;
     if (previous) {
-      fetch(`/api/player/session/${encodeURIComponent(previous)}`, { method: "DELETE" }).catch(() => {});
+      await fetch(`/api/player/session/${encodeURIComponent(previous)}`, { method: "DELETE" }).catch(() => {});
     }
+    if (seq !== player.sessionSeq || token !== player.token || player.closing) return;
 
     let playlist = "";
     try {
@@ -681,42 +748,81 @@
       playlist = data && typeof data.playlist === "string" ? data.playlist : "";
       const session = data && typeof data.session === "string" ? data.session : null;
       if (!playlist) throw new Error("The server returned no playlist.");
-      if (token !== player.token) {
+      if (seq !== player.sessionSeq || token !== player.token || player.closing) {
         if (session) {
-          fetch(`/api/player/session/${encodeURIComponent(session)}`, { method: "DELETE" }).catch(() => {});
+          await fetch(`/api/player/session/${encodeURIComponent(session)}`, { method: "DELETE" }).catch(() => {});
         }
         return;
       }
       player.session = session;
+      player.offset = Math.max(0, Number(start) || 0);
+      player.hlsMode = true;
     } catch (error) {
+      if (seq !== player.sessionSeq || token !== player.token || player.closing) return;
       setBuffering(false);
       showPlayerError(error && error.message ? error.message : "The player session could not start.");
       return;
     }
 
-    if (token !== player.token) return;
-    attachPlaylist(playlist, autoplay);
+    attachPlaylist(playlist, autoplay, seq);
   }
 
-  function attachPlaylist(url, autoplay) {
+  function playlistReady(url, seq) {
+    const player = state.player;
+    const token = player.token;
+    const deadline = Date.now() + 25000;
+    return (async () => {
+      while (Date.now() < deadline) {
+        if (seq !== player.sessionSeq || token !== player.token || player.closing) return false;
+        try {
+          const response = await fetch(url, { cache: "no-store" });
+          if (response.ok) {
+            const text = await response.text();
+            if (text.includes("#EXTINF")) return true;
+          }
+        } catch { /* session is still writing the playlist */ }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      return false;
+    })();
+  }
+
+  async function attachPlaylist(url, autoplay, seq) {
     const player = state.player;
     const video = els.video;
+
+    // ffmpeg writes the first segment before the playlist exists. Waiting here
+    // avoids hls.js backing off into a live-edge start on that first 404.
+    await playlistReady(url, seq);
+    if (seq !== player.sessionSeq || player.closing) return;
+
+    const settleSeek = () => {
+      if (seq !== player.sessionSeq || player.seekTarget === null) return;
+      player.seekTarget = null;
+      renderProgress();
+      renderBuffered();
+    };
+    video.addEventListener("loadedmetadata", settleSeek, { once: true });
+    video.addEventListener("canplay", settleSeek, { once: true });
+
     if (player.hls) {
       player.hls.destroy();
       player.hls = null;
     }
 
     const native = video.canPlayType("application/vnd.apple.mpegurl");
-    if (native) {
-      video.src = url;
-      video.load();
-      video.playbackRate = Number(els.speed.value) || 1;
-      if (autoplay) video.play().catch(() => setBuffering(false));
-      return;
-    }
-
     if (window.Hls && window.Hls.isSupported()) {
-      const hls = new window.Hls({ enableWorker: true, lowLatencyMode: false });
+      const hls = new window.Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        startPosition: 0,
+        manifestLoadingMaxRetry: 30,
+        manifestLoadingRetryDelay: 250,
+        manifestLoadingMaxRetryTimeout: 2000,
+        levelLoadingMaxRetry: 20,
+        levelLoadingRetryDelay: 250,
+        levelLoadingMaxRetryTimeout: 2000,
+      });
       player.hls = hls;
       hls.on(window.Hls.Events.ERROR, (_event, data) => {
         if (!data || !data.fatal) return;
@@ -730,6 +836,14 @@
       hls.loadSource(url);
       hls.attachMedia(video);
       video.playbackRate = Number(els.speed.value) || 1;
+      return;
+    }
+
+    if (native) {
+      video.src = url;
+      video.load();
+      video.playbackRate = Number(els.speed.value) || 1;
+      if (autoplay) video.play().catch(() => setBuffering(false));
       return;
     }
 
@@ -761,6 +875,9 @@
     player.audioIndex = Number.isInteger(options.audio) ? options.audio : 0;
     player.subIndex = Number.isInteger(options.subtitle) ? options.subtitle : null;
     player.tracks = fallbackTracks(item);
+    player.offset = 0;
+    player.hlsMode = !item.playableDirect || player.audioIndex > 0;
+    player.seekTarget = null;
 
     clearPlayerError();
     setBuffering(true);
@@ -809,6 +926,7 @@
     const tracks = player.tracks;
     const wantsSession = !item.playableDirect
       || (player.audioIndex > 0 && tracks.audio.length > 1);
+    player.hlsMode = wantsSession;
 
     if (wantsSession) {
       mountSubtitles(player.subIndex);
@@ -822,8 +940,10 @@
     const player = state.player;
     player.closing = true;
     player.token += 1;
+    player.sessionSeq += 1;
     window.clearTimeout(idleTimer);
     window.clearTimeout(hintTimer);
+    window.clearTimeout(player.seekTimer);
 
     if (player.hls) {
       player.hls.destroy();
@@ -847,6 +967,10 @@
     player.item = null;
     player.detail = null;
     player.tracks = { audio: [], subtitles: [] };
+    player.offset = 0;
+    player.hlsMode = false;
+    player.seekTarget = null;
+    player.seekTimer = null;
     player.closing = false;
     syncLock();
 
@@ -870,11 +994,10 @@
   /* ---------- player controls ---------- */
 
   function renderProgress() {
-    const video = els.video;
-    const duration = Number.isFinite(video.duration) && video.duration > 0
-      ? video.duration
-      : (state.player.item && state.player.item.duration) || 0;
-    const current = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+    const duration = playerDuration();
+    const current = duration > 0
+      ? Math.min(duration, playerPosition())
+      : playerPosition();
     const percent = duration ? Math.min(100, Math.max(0, (current / duration) * 100)) : 0;
 
     els.timelineFill.style.width = `${percent}%`;
@@ -888,15 +1011,19 @@
 
   function renderBuffered() {
     const video = els.video;
-    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    const player = state.player;
+    const duration = playerDuration();
     const nodes = [];
-    if (duration > 0) {
+    if (duration > 0 && player.seekTarget === null) {
       for (let i = 0; i < video.buffered.length; i += 1) {
-        const start = (video.buffered.start(i) / duration) * 100;
-        const end = (video.buffered.end(i) / duration) * 100;
+        const start = player.offset + video.buffered.start(i);
+        const end = player.offset + video.buffered.end(i);
+        const left = Math.min(100, Math.max(0, (start / duration) * 100));
+        const right = Math.min(100, Math.max(0, (end / duration) * 100));
+        if (right <= left) continue;
         const span = document.createElement("span");
-        span.style.left = `${start}%`;
-        span.style.width = `${Math.max(0, end - start)}%`;
+        span.style.left = `${left}%`;
+        span.style.width = `${right - left}%`;
         nodes.push(span);
       }
     }
@@ -946,13 +1073,27 @@
     renderVolume();
   }
 
-  function seekFromPointer(event) {
+  function timelineTarget(event) {
     const rect = els.timeline.getBoundingClientRect();
-    const duration = els.video.duration;
-    if (!rect.width || !Number.isFinite(duration) || duration <= 0) return;
+    const duration = playerDuration();
+    if (!rect.width || duration <= 0) return null;
     const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-    els.video.currentTime = ratio * duration;
-    renderProgress();
+    return ratio * duration;
+  }
+
+  function previewTimeline(event) {
+    const target = timelineTarget(event);
+    if (target === null) return null;
+    const player = state.player;
+    if (player.hlsMode) {
+      player.seekTarget = target;
+      renderProgress();
+      renderBuffered();
+    } else {
+      els.video.currentTime = target;
+      renderProgress();
+    }
+    return target;
   }
 
   function toggleFullscreen() {
@@ -1088,10 +1229,19 @@
 
     els.audio.addEventListener("change", () => {
       const index = Number(els.audio.value);
-      if (!Number.isInteger(index) || index === state.player.audioIndex) return;
-      state.player.audioIndex = index;
-      const position = Number.isFinite(els.video.currentTime) ? els.video.currentTime : 0;
-      startSession(index, position);
+      const player = state.player;
+      if (!Number.isInteger(index) || index === player.audioIndex) return;
+      const position = playerPosition();
+      player.audioIndex = index;
+      player.hlsMode = true;
+      player.seekTarget = position;
+      window.clearTimeout(player.seekTimer);
+      player.seekTimer = null;
+      els.video.pause();
+      setBuffering(true);
+      renderProgress();
+      renderBuffered();
+      startSession(index, position, true);
     });
 
     els.subs.addEventListener("change", () => {
@@ -1100,17 +1250,28 @@
     });
 
     els.timeline.addEventListener("pointerdown", (event) => {
+      window.clearTimeout(state.player.seekTimer);
+      state.player.seekTimer = null;
       els.timeline.dataset.dragging = "true";
       els.timeline.setPointerCapture(event.pointerId);
-      seekFromPointer(event);
+      previewTimeline(event);
       poke();
     });
     els.timeline.addEventListener("pointermove", (event) => {
-      if (els.timeline.dataset.dragging === "true") seekFromPointer(event);
+      if (els.timeline.dataset.dragging === "true") previewTimeline(event);
     });
-    const stopDrag = () => { delete els.timeline.dataset.dragging; };
-    els.timeline.addEventListener("pointerup", stopDrag);
-    els.timeline.addEventListener("pointercancel", stopDrag);
+    els.timeline.addEventListener("pointerup", () => {
+      delete els.timeline.dataset.dragging;
+      if (state.player.hlsMode) scheduleHlsSeek();
+    });
+    els.timeline.addEventListener("pointercancel", () => {
+      delete els.timeline.dataset.dragging;
+      if (state.player.hlsMode && state.player.seekTimer === null) {
+        state.player.seekTarget = null;
+        renderProgress();
+        renderBuffered();
+      }
+    });
 
     els.video.addEventListener("click", togglePlay);
     els.video.addEventListener("play", renderPlayState);
