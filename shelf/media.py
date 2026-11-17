@@ -608,6 +608,15 @@ async def start_session(file_id: str, audio: int, start: float) -> dict[str, Any
     if len(_sessions) >= MAX_SESSIONS:
         raise HTTPException(429, "Too many player sessions, close one first")
 
+    # the copy-only remux writes a second copy of the file; refuse when it cannot fit
+    try:
+        need = os.path.getsize(path) + (512 << 20)
+        free = shutil.disk_usage(HLS_ROOT).free
+    except OSError:
+        need, free = 0, 1
+    if need and free < need:
+        raise HTTPException(507, "Not enough free disk for the player copy")
+
     session = secrets.token_hex(8)
     directory = HLS_ROOT / session
     try:
@@ -617,6 +626,9 @@ async def start_session(file_id: str, audio: int, start: float) -> dict[str, Any
     log = directory / "ffmpeg.log"
     args = [
         binary,
+        # generate slightly ahead of playback instead of remuxing the whole film
+        "-readrate",
+        "1.2",
         "-ss",
         f"{max(0.0, float(start)):.3f}",
         "-i",
@@ -630,7 +642,7 @@ async def start_session(file_id: str, audio: int, start: float) -> dict[str, Any
         "-f",
         "hls",
         "-hls_time",
-        "4",
+        "2",
         "-hls_playlist_type",
         "event",
         "-hls_flags",
@@ -654,6 +666,7 @@ async def start_session(file_id: str, audio: int, start: float) -> dict[str, Any
     handle.close()
 
     _sessions[session] = {"pid": proc.pid, "dir": directory, "last": time.time(), "log": log, "proc": proc}
+
     return {"session": session, "playlist": f"/hls/{session}/index.m3u8"}
 
 
@@ -669,9 +682,15 @@ async def hls_file(session: str, name: str) -> Response:
     if not target.is_relative_to(entry["dir"].resolve()):
         raise HTTPException(404, "No such file")
     if not target.is_file():
-        if entry["proc"].returncode not in (None, 0):
-            raise HTTPException(500, f"ffmpeg failed, see {entry['log']}")
-        raise HTTPException(404, "Not ready")
+        # a segment can be requested a beat before ffmpeg writes it
+        for _ in range(40):
+            if target.is_file():
+                break
+            if entry["proc"].returncode not in (None, 0):
+                raise HTTPException(500, f"ffmpeg failed, see {entry['log']}")
+            await asyncio.sleep(0.1)
+        if not target.is_file():
+            raise HTTPException(404, "Not ready")
     mtype = "application/vnd.apple.mpegurl" if name.endswith(".m3u8") else "video/mp2t"
     return FileResponse(target, media_type=mtype, headers={"Cache-Control": "no-store"})
 

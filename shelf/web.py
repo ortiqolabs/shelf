@@ -65,7 +65,7 @@ async def track_and_cache(request, call_next):
     path = request.url.path
     if path.startswith("/api/") or path.startswith("/hls/"):
         response.headers["Cache-Control"] = "no-store"
-    elif path in ("/", "/index.html"):
+    elif path in ("/", "/index.html", "/theater", "/settings"):
         response.headers["Cache-Control"] = "no-cache"
     else:
         response.headers["Cache-Control"] = "public, max-age=604800"
@@ -330,6 +330,11 @@ async def put_settings(body: SettingsBody):
 @app.get("/settings", include_in_schema=False)
 async def settings_page() -> FileResponse:
     return FileResponse(config.STATIC_DIR / "settings.html")
+
+
+@app.get("/theater", include_in_schema=False)
+async def theater_page() -> FileResponse:
+    return FileResponse(config.STATIC_DIR / "theater.html")
 
 
 @app.post("/api/all/{verb}")
