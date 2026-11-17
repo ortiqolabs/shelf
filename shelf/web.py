@@ -22,7 +22,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, settings
+from . import config, media, settings
 from .aria2 import Aria2, summary
 from .qbittorrent import QB_PREFIX, QbError, Qbittorrent
 
@@ -51,13 +51,19 @@ class SettingsBody(BaseModel):
     maxDownloadLimit: str | None = None
 
 
+class PlayerBody(BaseModel):
+    id: str
+    audio: int = 0
+    start: float = 0.0
+
+
 @app.middleware("http")
 async def track_and_cache(request, call_next):
     """Cache the shell, and note activity so the idle watchdog knows."""
     state["last_seen"] = time.time()
     response = await call_next(request)
     path = request.url.path
-    if path.startswith("/api/"):
+    if path.startswith("/api/") or path.startswith("/hls/"):
         response.headers["Cache-Control"] = "no-store"
     elif path in ("/", "/index.html"):
         response.headers["Cache-Control"] = "no-cache"
@@ -141,7 +147,7 @@ async def watchdog() -> None:
     while True:
         await asyncio.sleep(30)
         idle = time.time() - state["last_seen"]
-        if state["streams"] == 0 and idle > IDLE_SECONDS:
+        if state["streams"] == 0 and media.active_streams() == 0 and idle > IDLE_SECONDS:
             print("shelf: idle, going to sleep", flush=True)
             raise SystemExit(0)
 
@@ -149,6 +155,12 @@ async def watchdog() -> None:
 @app.on_event("startup")
 async def start_watchdog() -> None:
     asyncio.create_task(watchdog())
+    await media.startup()
+
+
+@app.on_event("shutdown")
+async def stop_theater() -> None:
+    await media.shutdown()
 
 
 async def snapshot() -> dict:
@@ -333,6 +345,51 @@ async def pause_or_resume_everything(verb: str) -> dict:
     except QbError as exc:
         return {"ok": True, "qbt": {"ok": False, "error": str(exc)}}
     return {"ok": True}
+
+
+@app.get("/api/library")
+async def get_library() -> dict:
+    return await media.library()
+
+
+@app.get("/api/media/{file_id}")
+async def get_media(file_id: str) -> dict:
+    return await media.detail(file_id)
+
+
+@app.api_route("/api/stream/{file_id}", methods=["GET", "HEAD"])
+async def stream_media(file_id: str, request: Request):
+    return await media.stream_response(file_id, request)
+
+
+@app.get("/api/subtitles/{file_id}/{track}.vtt")
+async def get_subtitles(file_id: str, track: int):
+    return await media.subtitle_vtt(file_id, track)
+
+
+@app.get("/api/poster/{file_id}.svg", include_in_schema=False)
+async def get_poster(file_id: str):
+    return await media.poster_svg(file_id)
+
+
+@app.get("/api/backdrop/{file_id}.svg", include_in_schema=False)
+async def get_backdrop(file_id: str):
+    return await media.backdrop_svg(file_id)
+
+
+@app.post("/api/player/session")
+async def open_session(body: PlayerBody) -> dict:
+    return await media.start_session(body.id, body.audio, body.start)
+
+
+@app.delete("/api/player/session/{session}")
+async def close_session(session: str) -> dict:
+    return await media.stop_session(session)
+
+
+@app.get("/hls/{session}/{name}")
+async def hls(session: str, name: str):
+    return await media.hls_file(session, name)
 
 
 app.mount("/", StaticFiles(directory=str(config.STATIC_DIR), html=True), name="static")
